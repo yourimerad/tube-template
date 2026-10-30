@@ -42,6 +42,65 @@
       }
     },
     "private": { "type": "boolean", "description": "true (default): HTTP basic auth on everything + noindex + robots Disallow all." },
+    "audience": {
+      "enum": ["general", "adult"],
+      "description": "general (default) or adult: adult adds the age gate, the RTA label, the 2257 / DMCA / report pages and allows only adult-friendly ad presets (no Google)."
+    },
+    "age_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Only used with audience adult. See docs/ADS-adult.md.",
+      "properties": {
+        "mode": {
+          "enum": ["provider", "click", "sim", "off"],
+          "description": "provider: real age verification (redirect + signed token, HMAC or JWS); click: 18+ click-through (illegal for a public adult site in France, the UK and 27 US states); sim: local fake verifier (private sites only); off."
+        },
+        "provider": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "maxLength": 60 },
+            "start_url": { "type": "string", "pattern": "^(https://.+)?$" },
+            "verify": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": { "enum": ["hmac", "jws"], "description": "hmac: shared secret (secret_name); jws: ES256/RS256 signature checked with public_key or jwks_url." },
+                "public_key": { "type": "string", "maxLength": 4000, "description": "PEM public key of the provider (jws)." },
+                "jwks_url": { "type": "string", "pattern": "^(https://.+)?$", "description": "JWKS URL of the provider (jws), fetched and cached 1 h." },
+                "secret_name": {
+                  "type": "string",
+                  "pattern": "^([A-Za-z0-9._-]+)?$",
+                  "description": "Name of the file in ~/.secrets holding the HMAC secret shared with the provider (shipped to the box as AGE_GATE_SECRET)."
+                }
+              }
+            }
+          }
+        },
+        "allow_click_through": { "type": "boolean", "description": "Must be true to go public (private false) with mode click or off." },
+        "geo_rules": {
+          "type": "object",
+          "description": "Per visitor country (ISO code, or US-XX for a US state): verify | click | block, plus \"default\" (verify). Read from CF-IPCountry / X-Country and X-Region, which a CDN or proxy must set.",
+          "additionalProperties": { "enum": ["verify", "click", "block"] }
+        },
+        "exit_url": { "type": "string", "pattern": "^(https://.+)?$" }
+      }
+    },
+    "legal": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Placeholders of the /legal/2257, /legal/dmca, /legal/report and /legal/ncii pages (audience adult).",
+      "properties": {
+        "operator": { "type": "string", "maxLength": 300 },
+        "address": { "type": "string", "maxLength": 300 },
+        "email": { "type": "string", "maxLength": 300 },
+        "custodian": { "type": "string", "maxLength": 300 },
+        "custodian_address": { "type": "string", "maxLength": 300 },
+        "dmca_email": { "type": "string", "maxLength": 300 },
+        "report_email": { "type": "string", "maxLength": 300 },
+        "synthetic": { "type": "boolean", "description": "true only if ALL content is AI-generated and depicts no real person: the 2257 page then says so." }
+      }
+    },
     "media_base": { "type": "string", "minLength": 1, "description": "'/media' (served by the box) or https://cdn.example.com (a CDN / edge hostname)." },
     "strings": { "type": "object", "description": "Overrides of app/locales/<lang>.json keys (same nesting)." },
     "videos": {
@@ -99,22 +158,72 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "mode": { "enum": ["placeholder", "off", "live"] },
+        "mode": {
+          "enum": ["placeholder", "off", "sim", "live"],
+          "description": "placeholder: house boxes; sim: simulated network (private only); live: real networks; off."
+        },
         "slots": {
-          "type": "object", "additionalProperties": false,
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "leaderboard": { "type": "boolean" },
-            "sidebar": { "type": "boolean" },
-            "inline_mobile": { "type": "boolean" },
-            "native": { "type": "boolean" },
-            "sticky": { "type": "boolean" },
-            "preroll": { "type": "boolean" }
+            "leaderboard": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "sidebar": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "inline_mobile": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "native": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "sticky": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "preroll": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "footer": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "popunder": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "interstitial": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "inpage_push": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] },
+            "sponsored_links": { "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/ad_slot" }] }
           }
         },
         "vast_url": { "type": "string", "pattern": "^(https://.+)?$" },
         "house_preroll": { "type": "boolean", "description": "Play the generated house pre-roll when no VAST tag is set." },
         "native_every": { "type": "integer", "minimum": 2, "maximum": 50 },
-        "csp_origins": { "type": "array", "items": { "type": "string", "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]+)?$" } }
+        "csp_origins": { "type": "array", "items": { "type": "string", "pattern": "^https://[A-Za-z0-9.*-]+(:[0-9]+)?$" } },
+        "networks": {
+          "type": "object",
+          "description": "Ids per network preset, e.g. \"exoclick\": { \"publisher_id\": \"123\" }; \"custom\": { head_html, body_html, csp, ads_txt }.",
+          "additionalProperties": { "type": "object" }
+        },
+        "sponsored_links": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "url"],
+            "properties": { "label": { "type": "string", "minLength": 1, "maxLength": 30 }, "url": { "type": "string", "pattern": "^https?://.+" } }
+          }
+        },
+        "consent": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": ["auto", "banner", "cmp", "none"],
+              "description": "auto (default): the built-in consent banner for every visitor (none when region us); banner: always the built-in banner; cmp: a certified TCF CMP pasted in cmp_html (required with Google presets in the EU/UK); none."
+            },
+            "region": {
+              "enum": ["eu", "us", "other"],
+              "description": "eu (default): opt-in consent banner (EU/UK/Switzerland visitors may come from anywhere); us: US-only audience, no banner, opt-out link + Global Privacy Control; other."
+            },
+            "us_optout": { "type": "boolean", "description": "\"Do Not Sell or Share My Personal Information\" footer link + Global Privacy Control. Default: on for region us, and for an English site with region eu (next to the banner)." },
+            "cmp_html": { "type": "string", "maxLength": 20000 },
+            "cmp_csp": { "type": "array", "items": { "type": "string", "pattern": "^https://[A-Za-z0-9.*-]+(:[0-9]+)?$" } },
+            "policy_url": { "type": "string", "pattern": "^((https?://|/).+)?$" }
+          }
+        },
+        "ads_txt": { "type": "array", "items": { "type": "string", "maxLength": 300 } },
+        "sim": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "origin": { "type": "string", "pattern": "^(https?://[A-Za-z0-9.-]+(:[0-9]+)?)?$" }, "audience_rates": { "type": "string" } }
+        },
+        "csp_unsafe_inline": { "type": "boolean", "description": "Escape hatch for networks that inject inline scripts at run time (drops the sha256 hashes)." },
+        "csp_unsafe_eval": { "type": "boolean" }
       }
     },
     "dev": {
@@ -183,6 +292,26 @@
             "price_gb_month": { "type": "number", "minimum": 0 }
           }
         }
+      }
+    }
+  },
+  "$defs": {
+    "ad_slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "network": { "type": "string", "pattern": "^[a-z0-9_-]{2,32}$", "description": "Preset id (./tube ads check lists them), custom, or vast." },
+        "zone": { "type": "string", "maxLength": 120 },
+        "mobile_zone": { "type": "string", "maxLength": 120 },
+        "size": { "type": "string", "pattern": "^[0-9]{2,4}x[0-9]{2,4}$" },
+        "mobile_size": { "type": "string", "pattern": "^[0-9]{2,4}x[0-9]{2,4}$" },
+        "cap_hours": { "type": "integer", "minimum": 1, "maximum": 720 },
+        "every": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "vast_url": { "type": "string", "pattern": "^(https://.+)?$" },
+        "html": { "type": "string", "maxLength": 20000 },
+        "mobile_html": { "type": "string", "maxLength": 20000 },
+        "csp": { "type": "array", "items": { "type": "string", "pattern": "^https://[A-Za-z0-9.*-]+(:[0-9]+)?$" } }
       }
     }
   }

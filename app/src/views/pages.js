@@ -5,7 +5,7 @@ import { t, tn, label, clientStrings } from '../i18n.js';
 import { icons } from './icons.js';
 import { layout, pagination } from './layout.js';
 import { videoGrid, compactCard, media, poster, videoUrl } from './cards.js';
-import { adSlot, slotOn } from './ads.js';
+import { adSlot, prerollCfg } from './ads.js';
 import { SORT_TABS, sortLabel } from '../repo.js';
 
 function chips(cats, active) {
@@ -63,13 +63,10 @@ export function watchPage({ v, related, comments }) {
   const side = related.slice(0, 8);
   const url = videoUrl(v);
   const mp = v.media_path || v.id;
-  const prerollOn = slotOn('preroll');
   const player = {
     id: v.id,
     hls: media(mp, 'hls/master.m3u8'),
-    adsMode: prerollOn ? config.adsMode : 'off',
-    preroll: prerollOn && config.ads.housePreroll ? `${config.mediaBase}/_house/preroll.mp4` : null,
-    vastUrl: prerollOn ? config.ads.vastUrl || null : null,
+    ...prerollCfg(), // adsMode, preroll (house), vastUrl (network / sim VAST tag), vastNetwork, consent
     skipAfter: 5,
   };
   const posterJpg = media(mp, 'poster.jpg');
@@ -117,6 +114,7 @@ export function watchPage({ v, related, comments }) {
       </div>
       ${v.description ? html`<div class="v-desc"><p>${v.description}</p></div>` : ''}
       <div class="ad-inline-mob">${adSlot('rect', 'rect-mobile', 'inline_mobile')}</div>
+      <div class="ad-footer-row">${adSlot('footer')}</div>
 
       <section class="comments" id="comments" data-id="${v.id}">
         <div class="cmts-head">

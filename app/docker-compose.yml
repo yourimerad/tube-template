@@ -11,6 +11,9 @@ x-site-env: &site-env
     required: false
   - path: ${TUBE_ROOT:?TUBE_ROOT is required}/secrets/.env
     required: true
+  # adult age gate: AGE_COOKIE_SECRET (shared with nginx) + AGE_GATE_SECRET (provider HMAC), mode 600
+  - path: ${TUBE_ROOT:?TUBE_ROOT is required}/secrets/age.env
+    required: false
 
 services:
   db:
@@ -57,6 +60,8 @@ services:
     restart: unless-stopped
     env_file:
       - path: .env.site
+        required: false
+      - path: ${TUBE_ROOT:?TUBE_ROOT is required}/secrets/age.env
         required: false
     ports:
       - "${HTTP_PORT:-80}:80"

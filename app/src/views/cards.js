@@ -58,7 +58,7 @@ export function compactCard(v) {
 // Grid with a native ad card after every N video cards. `extraCls(v, i)` lets callers tag cards.
 export function videoGrid(videos, { ads = true, extraCls = null, empty = '' } = {}) {
   if (!videos.length) return html`<p class="empty">${empty}</p>`;
-  const every = config.ads.nativeEvery;
+  const every = config.ads.native_every;
   const items = [];
   videos.forEach((v, i) => {
     items.push(videoCard(v, i, extraCls ? extraCls(v, i) : ''));

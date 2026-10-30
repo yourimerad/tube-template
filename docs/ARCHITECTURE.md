@@ -92,10 +92,83 @@ non-GET call.
 
 - `app/src/server.js`: routes (`/`, localized `/trending /new /top-rated` or `/tendances /nouveautes /mieux-notees`,
   `/c/<category>`, `/v/<id>/<slug>`, `/search`, `/categories`, sitemap, robots), JSON API (`/api/videos/<id>/...`).
-- `app/src/views/*`: server-rendered HTML; no inline script or style (strict CSP). Per-request data goes in
-  `<script type="application/json">` blocks.
+- `app/src/views/*`: server-rendered HTML; the site's own code has no inline script or style (strict CSP).
+  Per-request data goes in `<script type="application/json">` blocks. Inline scripts of ad tags are allowed one by
+  one by their sha256 (see Ads engine).
 - `app/static/js/watch.js`: player (hls.js, quality menu, pre-roll, votes, comments); `site.js`: hover / touch
-  previews; `ads-vast.js`: VAST pre-roll for `ads.mode = "live"`.
+  previews; `ads.js`: consent + ad activation; `ads-vast.js`: VAST 4.x pre-roll; `age.js`: age-gate session refresh.
 - `app/migrations/*.sql`: applied in order at start-up.
 - Privacy: viewers are identified by a random cookie hashed with `HASH_SALT`; IPs are hashed the same way for rate
   limits and never stored in clear.
+
+## Ads engine
+
+User docs: docs/ADS-general.md and docs/ADS-adult.md. Commands: `./tube ads setup | check | report`,
+`./tube dev --ads off|placeholder|sim|live|config`.
+
+**Config.** `ads` (+ `audience`, `age_gate`, `legal`) in site.config.json → `lib/config.mjs` validates it (schema,
+then cross rules: unknown / closed network, audience mismatch, zone formats, Google + adult / popunder /
+interstitial / EU without a TCF CMP, `sim` on a public site, public adult click-through without
+`allow_click_through`, provider keys) and writes the runtime `site.json`. `app/src/ads/normalize.js` turns it into one
+shape used everywhere (server, CLI, ingest, tests): mode, 11 slots `{on, network, zone, mobile_zone, html,
+vast_url, format}`, consent `{mode, region, effective, us_optout}`. The legacy form (boolean slots, `ads.vast_url`,
+`csp_origins`) still works.
+
+**Presets** (`app/src/ads/presets/<id>.js`, interface in `_util.js`): metadata (audiences, Google or not,
+`verified` + source URL + date, `unverifiedFormats`, signup URL, account `fields`, zone pattern) and pure
+functions: `head(net)` (loader in `<head>`), `render(format, slot, net, ctx)` → HTML variants per device
+(`desk` / `mob` / `all`), `vast(slot, net)` → VAST URL with macros, `adsTxt(net)`, CSP origins per directive.
+Closed programs (AdXpansion, TrafficJunky self-serve) are stubs that make validation fail with an explanation.
+`render.js` picks the format each preset supports and assembles `pageAssets` (head / bodyEnd / CMP).
+
+**CSP** (`csp.js`). Per page: `'self'` + the origins of the presets in use + `'sha256-…'` of every inline script
+of the ad markup (computed once per markup and cached) + the CMP origins; no `unsafe-inline`, no nonce (pages are
+cached by nginx, a nonce would be shared by everyone). Google tags officially need a nonce-based strict CSP, which
+a cached page cannot give: Google presets use `https:` in script-src / frame-src plus `'unsafe-eval'` instead.
+`ads.csp_unsafe_inline` is the escape hatch for networks that inject inline scripts at run time.
+
+**Consent wire protocol.** While consent is required, `views/ads.js` makes every ad `<script>` inert
+(`type="text/plain" data-consent="ads"`, the real type in `data-type`) and puts device variants in
+`<template data-ad-tpl data-media="desk|mob|all">`; slots show a labelled house box meanwhile. `static/js/ads.js`
+reads the `tube_consent` cookie (1 accept / 0 refuse, 6 months) or the banner choice, then activates: head
+scripts first, then templates matching the viewport, then the rest, **sequentially** (an external script without
+`async` is awaited before the next one, so `atOptions = {...}` + `invoke.js` pairs work). US opt-out:
+`tube_optout` cookie or `navigator.globalPrivacyControl` = refusal, and wins over everything. With a CMP
+(`consent.mode "cmp"`), the CMP snippet is never inert and the TCF `__tcfapi` answer replaces the banner.
+
+**VAST pre-roll** (`static/js/ads-vast.js`): VAST 4.x (and 2/3) InLine + Wrapper chains (max 5), macros
+(`[CACHEBUSTING]`, `[PAGEURL]`, `[TIMESTAMP]`, `[ERRORCODE]`), skipoffset, impression / quartile / skip / click
+/ error tracking, progressive MP4 only, timeouts, falls back to the house pre-roll or straight to the video.
+Same-origin VAST (SimAds) is fetched with credentials, third-party VAST without. Not supported: VPAID, SIMID,
+OMID verification. Legacy "AdSense for video" ended on 2026-05-31; Google Ad Manager video demand (AdX) needs the
+IMA SDK, so the `gam` preset's VAST URL works with ads-vast.js only for direct-sold / non-AdX line items.
+
+**SimAds** (ads.mode `sim`, `app/src/simads/`, private sites only): the engine renders the `simads` preset:
+`<script async src="/simads/static/loader.js" data-audience="…">` + `<ins class="simads" data-zone data-format
+data-size data-mobile-size>` per slot, and the pre-roll VAST URL `/simads/vast?zone=preroll`. The loader fills
+the `ins`, sends beacons, and does nothing when `<html data-age-gate>` is set. `./tube ads report` reads
+`/simads/report.json`. Consent applies in sim mode exactly as in live mode.
+
+**Age gate** (`app/src/ads/agegate.js`, audience adult). Passing the gate sets two session cookies:
+`av_exp` (unix expiry, now + 1 h, slid by `POST /age/refresh` from `age.js` while the visitor is active) and
+`av_sig = base64url(md5("<av_exp> <AGE_COOKIE_SECRET>"))`, HttpOnly. The app checks them in an `onRequest` hook
+(ungated: `/age/*`, `/legal/*`, static, health, robots, ads.txt); nginx checks the same pair with `secure_link`
+(rendered into `gate.conf` by `site-entrypoint.sh` when `AGE_GATE=1`; it refuses to start without the secret),
+returns 403 on `/media` without it, forwards only those two cookies to the app, and adds the result + the geo
+headers to the page-cache key (`$age_key`), so verified and unverified pages never mix while the 30 s cache keeps
+working. The gate page itself is a bare layout: no script, image, video or ad. `geo_rules` map a country or
+`US-XX` (from `CF-IPCountry` / `X-Country` / `X-Region`) to verify / click / block (451). Provider flow:
+`/age/start` → provider `start_url?return_url&state` → `/age/callback?token&state`; token = HMAC
+(`base64url(JSON).base64url(HMAC-SHA256)`, secret `AGE_GATE_SECRET`) or a JWS ES256 / RS256 checked against a PEM
+key or a JWKS URL (cached 1 h); claims `over18`, `exp` (≤ 1 h), `state`. `sim` mode puts a local fake verifier at
+`/age/sim`. Every response of an adult site carries `Rating: RTA-5042-1996-1400-1577-RTA` (+ the meta tag).
+Secrets: `secrets/age.env` (600) on the box, `AGE_COOKIE_SECRET` generated there once, `AGE_GATE_SECRET`
+piped from `~/.secrets/<age_gate.provider.verify.secret_name>`. A CDN in front of `/media` bypasses nginx's check:
+use the CDN's own token auth (validation warns).
+
+**Tests.** `app/test/run-e2e.sh` runs every `app/test/e2e*.mjs`; `e2e-ads.mjs` covers validation cases and,
+driven by `app/test/ads-scenarios.sh` (placeholder, live, adult-click, adult-sim on a throwaway private config),
+labelled slots, zero third-party request before consent, exact preset tags, CSP origins + hashes without
+violation, consent refuse / accept / GPC, a VAST pre-roll with tracking (every third-party request intercepted
+by Playwright, nothing leaves the machine), `/ads.txt`, the age gate (gate page content, `/media` 403, session
+cookies, forged cookie, cache isolation, geo block, sliding refresh, failed verification).

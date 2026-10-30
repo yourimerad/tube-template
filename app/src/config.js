@@ -1,10 +1,14 @@
 // Runtime configuration.
 //  - Site-level settings come from site.json (generated from site.config.json by `./tube`, baked into the image).
 //  - Environment-level settings come from the environment (SITE_HOST, PRIVATE, MEDIA_BASE, ADS_MODE, SITE_SCHEME,
-//    PG*, HASH_SALT): they differ between local dev and a deployed box, the site.json does not.
+//    PG*, HASH_SALT, AGE_GATE_SECRET, AGE_COOKIE_SECRET): they differ between local dev and a deployed box, the site.json does not.
+//  - Ads: site.json "ads" is normalized by ads/normalize.js (old boolean slots keep working); ADS_MODE
+//    (off | placeholder | sim | live, `./tube dev --ads X`) overrides ads.mode.
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHmac } from 'node:crypto';
+import { normalizeAds } from './ads/normalize.js';
 
 const env = process.env;
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -15,9 +19,14 @@ const site = existsSync(siteFile) ? JSON.parse(readFileSync(siteFile, 'utf8')) :
 if (!existsSync(siteFile)) console.warn(`[config] ${siteFile} not found: using built-in defaults (run ./tube from the repo root)`);
 
 const lang = ['fr', 'en'].includes(site.language) ? site.language : 'en';
-const ADS_MODES = ['placeholder', 'off', 'live'];
-const adsMode = ADS_MODES.includes(env.ADS_MODE) ? env.ADS_MODE : (ADS_MODES.includes(site.ads?.mode) ? site.ads.mode : 'placeholder');
-const slots = { leaderboard: true, sidebar: true, inline_mobile: true, native: true, sticky: true, preroll: true, ...(site.ads?.slots || {}) };
+const isPrivate = bool(env.PRIVATE, site.private !== false); // fail closed: private unless PRIVATE=0 / "private": false
+// ADS_MODE=sim is refused on a public site (the simulated network is for rehearsals only).
+const modeOverride = env.ADS_MODE === 'sim' && !isPrivate ? '' : env.ADS_MODE;
+const ads = normalizeAds(env.ADS_VAST_URL ? { ...site.ads, vast_url: env.ADS_VAST_URL } : site.ads, { language: lang, modeOverride });
+if (ads.mode === 'sim' && !isPrivate) ads.mode = 'placeholder';
+const adsMode = ads.mode;
+const audience = site.audience === 'adult' ? 'adult' : 'general';
+const gate = site.age_gate || {};
 
 export const config = {
   port: Number(env.PORT || 3000),
@@ -39,17 +48,26 @@ export const config = {
   categories: site.categories || {},
   strings: site.strings || {},
   siteHost: env.SITE_HOST || 'localhost',
-  private: bool(env.PRIVATE, site.private !== false), // fail closed: private unless PRIVATE=0 / "private": false
+  private: isPrivate,
   mediaBase: (env.MEDIA_BASE || site.media_base || '/media').replace(/\/+$/, ''),
   mediaDir: env.MEDIA_DIR || '/srv/media',
   adsMode,
-  ads: {
-    slots: adsMode === 'off' ? Object.fromEntries(Object.keys(slots).map(k => [k, false])) : slots,
-    vastUrl: adsMode === 'off' ? '' : (env.ADS_VAST_URL || site.ads?.vast_url || ''),
-    housePreroll: adsMode !== 'off' && site.ads?.house_preroll !== false,
-    nativeEvery: Math.max(2, Number(site.ads?.native_every) || 8),
-    cspOrigins: Array.isArray(site.ads?.csp_origins) ? site.ads.csp_origins.filter(o => /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(o)) : [],
+  ads, // normalized: see ads/normalize.js
+  audience,
+  ageGate: {
+    mode: audience === 'adult' ? (['provider', 'click', 'sim', 'off'].includes(gate.mode) ? gate.mode : 'click') : 'off',
+    provider: {
+      name: gate.provider?.name || '', start_url: gate.provider?.start_url || '',
+      verify: { type: gate.provider?.verify?.type || 'hmac', public_key: gate.provider?.verify?.public_key || '', jwks_url: gate.provider?.verify?.jwks_url || '' },
+    },
+    geo_rules: gate.geo_rules || {},
+    exit_url: gate.exit_url || 'https://www.google.com/',
   },
+  ageGateSecret: env.AGE_GATE_SECRET || '', // provider HMAC secret (verify.type "hmac")
+  // av_sig cookie key, shared with nginx (secure_link_md5); falls back to a key derived from HASH_SALT (then
+  // nginx cannot check /media: ./tube dev and deploy always set AGE_COOKIE_SECRET).
+  ageCookieSecret: env.AGE_COOKIE_SECRET || (env.HASH_SALT ? createHmac('sha256', env.HASH_SALT).update('age-cookie').digest('hex') : ''),
+  legal: site.legal || {},
   hashSalt: env.HASH_SALT || '',
   pageSize: 36,
   db: {
