@@ -1,0 +1,4 @@
+path,title,description,tags,category,hidden
+Fractals/mandelbrot_deep-zoom.mp4,"Mandelbrot, deep zoom",A slow dive into the Mandelbrot set (generated with ffmpeg's mandelbrot source).,fractal|zoom|math,,
+gosper_glider-gun.mp4,Glider gun,Conway's Game of Life at 30 generations per second.,cellular automaton|conway,,
+Test patterns/smpte_bars__countdown.mp4,,SMPTE HD colour bars.,test card|smpte,,

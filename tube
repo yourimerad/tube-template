@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+# tube : one CLI for a video site built from this template. `./tube help` for everything.
+set -euo pipefail
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG="${TUBE_CONFIG:-$REPO/site.config.json}"
+if [[ "${1:-}" == --config ]]; then CONFIG="${2:?--config needs a file}"; shift 2; fi
+[[ "$CONFIG" == /* ]] || CONFIG="$PWD/$CONFIG"
+export TUBE_CONFIG="$CONFIG"
+
+usage() {
+  cat <<'EOF'
+tube - build, run and host a video site from a folder of videos.
+
+Usage: ./tube [--config FILE] <command> [options]        (default config: ./site.config.json, or $TUBE_CONFIG)
+
+Set up
+  init [--yes --name X --videos DIR ...]   create site.config.json (interactive wizard, or flags with --yes:
+                                           --name --tagline --lang fr|en --accent --videos --manifest --label on|off
+                                           --target ovh|ssh --prefix --project --region --ssh-host --ssh-user
+                                           --ssh-port --media-origin bucket|rsync --s3-endpoint --s3-region --domain
+                                           --port --out --force)
+  validate                                 check site.config.json against site.config.schema.json
+  config [json | get <dotted.key>]         print the resolved config (defaults filled in)
+  demo [--force]                           generate 8 synthetic clips (ffmpeg lavfi) in examples/demo-videos/;
+                                           without a config, also writes a demo site.config.json
+
+Content
+  ingest [--only X] [--force] [--prune] [--jobs N] [--dry-run]
+                                           videos folder (+ manifest) -> HLS ladder, posters, previews, catalog.json
+                                           (incremental: unchanged videos are skipped; --prune drops orphans)
+
+Local
+  dev [--port N]                           run the site locally (docker compose) on 127.0.0.1:<port>; prints the
+                                           URL, user and the throwaway local password
+  dev down [--volumes] | logs | ps         stop (and drop the local database) / follow logs / list containers
+  test [URL]                               curl checks + Playwright e2e against the dev site (or URL, with the
+                                           deploy password); screenshots in runs/screenshots/
+
+Hosting (deploy.target in the config: "ovh" = OVH Public Cloud, fully automated; "ssh" = any Ubuntu server)
+  up [--fresh] [--loadgen] [--dry-run]     ovh: create the box (region fallback, watchdog first); ssh: bootstrap
+                                           docker + ufw on deploy.ssh.host
+  deploy [--skip-media] [--skip-cert] [--staging] [--rotate-auth] [--dry-run]
+                                           ship app + media, compose up, Let's Encrypt, verify
+  status                                   box, site health, bucket, watchdog, cost line
+  bucket create|sync|du|ls|check [--dry-run]  the private S3 media bucket (any S3-compatible provider)
+  park [--dry-run]                         ovh: snapshot the box then delete it (idle cost = snapshot + bucket)
+  teardown [--dry-run] [name...]           ovh: delete the <prefix>* instances (no snapshot); ssh: compose down
+  watchdog install|status|uninstall|run [--dry-run]
+                                           ovh: systemd user timer, parks at cap-15 min, deletes at cap
+  cost                                     ovh: spend so far + monthly idle cost
+  loadtest [--vus 50,150,300] [--local] [--url URL] ...
+                                           k6 from <prefix>loadgen (./tube up --loadgen first), or --local
+
+Typical flow
+  ./tube init && ./tube demo && ./tube ingest && ./tube dev && ./tube test
+  ./tube bucket create && ./tube bucket sync && ./tube up && ./tube deploy && ./tube status
+  ./tube park        # when done for the day (ovh): ./tube up && ./tube deploy brings it back
+
+Secrets: only file NAMES go in the config; the files live in ~/.secrets (or $TUBE_SECRETS_DIR), mode 600.
+FFmpeg: ffmpeg/ffprobe from PATH, or set FFMPEG_BIN_DIR.
+EOF
+}
+
+need_config() { [[ -f "$CONFIG" ]] || { echo "no config at $CONFIG: run ./tube init (or ./tube demo)" >&2; exit 1; }; }
+cfg() { node "$REPO/lib/config.mjs" --config "$CONFIG" "$@"; }
+load_shell() { need_config; local s; s="$(cfg shell)"; eval "$s"; }
+
+port_busy() { ss -Hltn "sport = :$1" 2>/dev/null | grep -q .; }
+
+dev_compose() {   # dev_compose ARGS...  (needs load_shell + DEV_* set)
+  ( cd "$REPO/app"; export SITE_SLUG
+    TUBE_ROOT="$DEV_DIR/root" MEDIA_HOST_DIR="$MEDIA_OUT" LOCAL_PORT="$PORT" \
+    LOCAL_PRIVATE="$SITE_PRIVATE" AUTH_REALM="$AUTH_REALM" HTTP_PORT=80 HTTPS_PORT=443 \
+      docker compose -p "$SITE_SLUG-dev" -f docker-compose.yml -f test/compose.local.yml "$@" )
+}
+
+cmd_dev() {
+  load_shell
+  local sub=up PORT="$DEV_PORT" vol=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      up|down|logs|ps) sub="$1"; shift ;;
+      --port) PORT="$2"; shift 2 ;;
+      --volumes) vol=(-v); shift ;;
+      *) echo "dev: unknown argument $1" >&2; exit 2 ;;
+    esac
+  done
+  [[ -f "$DEV_DIR/port" && "$sub" != up ]] && PORT="$(cat "$DEV_DIR/port")"
+  case "$sub" in
+    down) dev_compose down "${vol[@]}"; return ;;
+    logs) dev_compose logs -f --tail 100; return ;;
+    ps) dev_compose ps; return ;;
+  esac
+  [[ -s "$MEDIA_OUT/catalog.json" ]] || { echo "no $MEDIA_OUT/catalog.json: run ./tube ingest first" >&2; exit 1; }
+  if port_busy "$PORT" && ! dev_compose ps --status running -q nginx 2>/dev/null | grep -q .; then
+    echo "port $PORT is in use by something else: ./tube dev --port <free port> (or set dev.port)" >&2; exit 1
+  fi
+  mkdir -p "$DEV_DIR/root/secrets" "$DEV_DIR/root/letsencrypt" "$DEV_DIR/root/certbot-www"
+  chmod 700 "$DEV_DIR"
+  echo "$PORT" > "$DEV_DIR/port"
+  local env="$DEV_DIR/root/secrets/.env" pw="$DEV_DIR/password"
+  if [[ ! -s "$env" ]]; then
+    ( umask 077; printf 'POSTGRES_PASSWORD=%s\nHASH_SALT=%s\n' "$(openssl rand -hex 24)" "$(openssl rand -hex 32)" > "$env" )
+  fi
+  if [[ ! -s "$pw" ]]; then ( umask 077; node -e 'process.stdout.write(require("crypto").randomBytes(96).toString("base64").replace(/[^A-Za-z0-9]/g, "").slice(0, Number(process.argv[1])))' 24 > "$pw" ); fi
+  # a FILE before compose runs (docker would create a directory at a missing bind-mount source)
+  [[ -d "$DEV_DIR/root/secrets/htpasswd" ]] && rm -rf "$DEV_DIR/root/secrets/htpasswd"
+  node "$REPO/lib/htpasswd.mjs" "$BASIC_USER" "$pw" > "$DEV_DIR/root/secrets/htpasswd"
+  chmod 644 "$DEV_DIR/root/secrets/htpasswd"
+  cfg runtime "$REPO/app/site.json"
+  echo "building and starting $SITE_SLUG-dev on 127.0.0.1:$PORT ..."
+  dev_compose up -d --build --remove-orphans 2>&1 | grep -vE '^\s*$' | tail -6
+  local ok=no
+  for _ in $(seq 1 90); do
+    if [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/healthz")" == 200 ]]; then ok=yes; break; fi
+    sleep 1
+  done
+  [[ "$ok" == yes ]] || { echo "site not healthy after 90 s:"; dev_compose ps; dev_compose logs --tail 30 app; exit 1; }
+  echo
+  echo "  $SITE_NAME is running: http://127.0.0.1:$PORT/"
+  if [[ "$SITE_PRIVATE" == 1 ]]; then
+    echo "  user: $BASIC_USER   password (local, throwaway): $(cat "$pw")"
+  fi
+  echo "  stop: ./tube dev down   (add --volumes to also drop the local database)"
+}
+
+cmd_test() {
+  load_shell
+  local url="${1:-}" pwf auth_tmp shots
+  if [[ -z "$url" ]]; then
+    [[ -f "$DEV_DIR/port" ]] || { echo "no dev site (./tube dev) and no URL given" >&2; exit 1; }
+    url="http://127.0.0.1:$(cat "$DEV_DIR/port")"; pwf="$DEV_DIR/password"
+  else
+    pwf="$BASIC_FILE"
+  fi
+  url="${url%/}"
+  shots="${SHOTS:-$RUNS_DIR/screenshots/$SITE_SLUG-$SITE_LANG}"
+  mkdir -p "$shots"
+  auth_tmp="$(mktemp)"; chmod 600 "$auth_tmp"; trap 'rm -f "$auth_tmp"' RETURN
+  if [[ "$SITE_PRIVATE" == 1 ]]; then
+    [[ -r "$pwf" ]] || { echo "no password file $pwf" >&2; exit 1; }
+    { printf 'user = "%s:' "$BASIC_USER"; tr -d '\n' < "$pwf"; printf '"\n'; } > "$auth_tmp"
+  fi
+  local expect; expect="$(node -e '
+    const fs = require("fs"); const c = JSON.parse(fs.readFileSync(0, "utf8"));
+    let cat = []; try { cat = JSON.parse(fs.readFileSync(c.paths.media + "/catalog.json", "utf8")); } catch {}
+    const cats = new Set(cat.filter(v => !v.hidden).map(v => v.category).filter(s => !(c.categories[s] && c.categories[s].hidden)));
+    const on = c.ads.mode !== "off";
+    console.log([cats.size, on && c.ads.slots.sticky ? 1 : 0, on && c.ads.slots.preroll && (c.ads.house_preroll || c.ads.vast_url) ? 1 : 0].join(" "));
+  ' < <(cfg json))"
+  local ncats sticky preroll; read -r ncats sticky preroll <<<"$expect"
+  local rc=0 stamp="$RUNS_DIR/.last-test" left
+  # comments are rate-limited per IP per minute and the last curl check uses up the quota: space runs out
+  mkdir -p "$RUNS_DIR"
+  if [[ -f "$stamp" ]]; then
+    left=$(( 65 - $(date +%s) + $(stat -c %Y "$stamp") ))
+    if (( left > 0 )); then echo "waiting ${left}s for the comment rate-limit window of the previous run"; sleep "$left"; fi
+  fi
+  # e2e first: it posts a comment; the last curl check then exhausts the per-IP comment rate limit
+  echo "== e2e (Playwright, $SITE_LANG, expecting $ncats categories)"
+  local loc=en-US; [[ "$SITE_LANG" == fr ]] && loc=fr-FR
+  AUTH_USER="$( [[ "$SITE_PRIVATE" == 1 ]] && echo "$BASIC_USER" || true)" AUTH_PASS_FILE="$( [[ "$SITE_PRIVATE" == 1 ]] && echo "$pwf" || true)" \
+  SHOTS="$shots" WORK="${WORK:-$RUNS_DIR/.e2e-work}" LOCALE="$loc" LABEL_TEXT="$LABEL_TEXT" EXPECT_CATS="$ncats" \
+  EXPECT_STICKY="$sticky" EXPECT_PREROLL="$preroll" \
+    bash "$REPO/app/test/run-e2e.sh" "$url" || rc=1
+  echo "== curl checks ($url)"
+  if [[ "$SITE_PRIVATE" == 1 ]]; then AUTH_CFG="$auth_tmp" PRIVATE=1 bash "$REPO/app/test/curl-checks.sh" "$url" || rc=1
+  else PRIVATE=0 bash "$REPO/app/test/curl-checks.sh" "$url" || rc=1; fi
+  touch "$stamp"
+  echo "screenshots: $shots"
+  return "$rc"
+}
+
+cmd_demo() {
+  node "$REPO/lib/demo.mjs" "$@"
+  if [[ ! -f "$CONFIG" ]]; then
+    node "$REPO/lib/init.mjs" --yes --name "Demo Tube" --tagline "Synthetic clips to try the template" \
+      --videos "$REPO/examples/demo-videos" --manifest "$REPO/examples/demo-manifest.csv" --out "$CONFIG"
+  else
+    echo "config exists ($CONFIG): point videos.dir at examples/demo-videos (and videos.manifest at examples/demo-manifest.csv) to use the demo clips"
+  fi
+}
+
+infra() { need_config; local s="$1"; shift; exec "$REPO/infra/$s" "$@"; }
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  help|-h|--help) usage ;;
+  init)      exec node "$REPO/lib/init.mjs" --out "$CONFIG" "$@" ;;
+  validate)  need_config; cfg validate ;;
+  config)    need_config; if [[ $# -eq 0 ]]; then cfg json; else cfg "$@"; fi ;;
+  demo)      cmd_demo "$@" ;;
+  ingest)    need_config; exec node "$REPO/pipeline/ingest.mjs" --config "$CONFIG" "$@" ;;
+  dev)       cmd_dev "$@" ;;
+  test)      cmd_test "$@" ;;
+  up)        infra up.sh "$@" ;;
+  deploy)    infra deploy.sh "$@" ;;
+  status)    infra status.sh "$@" ;;
+  cost)      infra cost.sh "$@" ;;
+  loadtest)  infra loadtest.sh "$@" ;;
+  park)      infra park.sh "$@" ;;
+  teardown)  infra teardown.sh "$@" ;;
+  watchdog)  infra watchdog.sh "$@" ;;
+  bucket)    infra bucket.sh "$@" ;;
+  *) echo "unknown command: $cmd (./tube help)" >&2; exit 2 ;;
+esac

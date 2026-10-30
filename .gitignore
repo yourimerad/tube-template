@@ -1,0 +1,39 @@
+# your site's config can be committed (it holds no secrets); uncomment to keep it private to your machine
+# site.config.json
+
+# generated media + catalog, runs, local dev state
+out/
+runs/
+.dev/
+media/
+videos/
+examples/demo-videos/
+app/site.json
+app/.env.site
+
+# dependencies, tooling
+node_modules/
+.e2e-work/
+
+# secrets: never in git (they live in ~/.secrets)
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+htpasswd
+*-basic-auth
+ovh-api-token
+
+# screenshots and test output
+screenshots/
+*.png
+!docs/**/*.png
+test-results/
+
+# editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

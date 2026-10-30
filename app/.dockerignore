@@ -1,0 +1,7 @@
+node_modules
+test
+scripts
+nginx
+.env*
+*.md
+docker-compose*.yml

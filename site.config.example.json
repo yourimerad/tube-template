@@ -1,0 +1,125 @@
+// site.config.example.json: every option, with its default. Copy to site.config.json (or run ./tube init).
+// Comments and trailing commas are allowed (JSONC). Relative paths are relative to this file.
+// Validate with: ./tube validate      Schema: site.config.schema.json
+{
+  "$schema": "./site.config.schema.json",
+
+  "site": {
+    "name": "My Tube",                     // header, <title>, footer
+    "slug": "my-tube",                     // machine name: images, units, default prefix. Default: from name
+    "tagline": "Short videos, every day",  // home <title> + meta description
+    "description": "",                     // default meta description ("" = "<name> : <tagline>")
+    "language": "en",                      // "en" | "fr": UI strings (app/locales/<lang>.json) + search stemming
+    "accent_color": "#2ee6b6",
+    "logo_text": "My Tube",                // the last capitalised word gets the accent colour
+  },
+
+  // Disclosure label on every video page + a badge on thumbnails. Default text: the "AI-generated video"
+  // string of the language. Set "enabled": false for a niche that is not AI content.
+  "content_label": { "enabled": true, "text": "AI-generated video", "badge": "AI", "color": "#ff5d6c" },
+
+  "footer": {
+    "text": null,                          // null = language default (mentions the content label when enabled)
+    "legal": "",                           // small print: legal notice, host, contact
+  },
+
+  // true (default, fail closed): HTTP basic auth on the whole site + noindex + robots "Disallow: /".
+  // Set false only when you are ready to go public.
+  "private": true,
+
+  // "/media" = served by the box's nginx. A CDN later: "https://media.example.com" (see docs/SCALING.md).
+  "media_base": "/media",
+
+  // Override any UI string of app/locales/<lang>.json (same nesting), e.g. the home heading:
+  "strings": { "home_heading": "Latest videos" },
+
+  "videos": {
+    "dir": "videos",                       // one subfolder per category: "Cooking tips/how_to-boil eggs.mp4"
+                                           // -> category "Cooking tips" (slug cooking-tips), title "How to boil eggs"
+    "manifest": "videos.csv",              // optional CSV/JSON keyed by relative path or file name; columns:
+                                           // path,title,description,tags,category,hidden,slug (tags separated by |)
+    "default_category": "Videos",          // for files directly in "dir"
+    "extensions": ["mp4", "mov", "m4v", "mkv", "webm", "avi"],
+  },
+
+  // Keyed by the category SLUG (as derived from the folder name): rename, order, hide.
+  "categories": {
+    "cooking-tips": { "name": "Cooking", "position": 1 },
+    "outtakes": { "hidden": true },
+  },
+
+  "ingest": {
+    "out_dir": "out",                      // out/media/<id>/<v>/... + out/catalog.json
+    "ladder": [                            // HLS rungs by SHORT side (vertical videos too); never upscaled
+      { "short": 720, "video_kbps": 2500, "audio_kbps": 128 },
+      { "short": 480, "video_kbps": 1200, "audio_kbps": 96 },
+      { "short": 360, "video_kbps": 700, "audio_kbps": 64 },
+      { "short": 240, "video_kbps": 400, "audio_kbps": 64 },
+    ],
+    "segment_seconds": 4,
+    "crf": 23,
+    "preview_seconds": 6,                  // hover preview: preview_snippets snippets, 426x240, no audio
+    "preview_snippets": 6,
+    "preview_max_kb": 400,
+    "poster_position": 0.35,               // poster frame at 35 % of the duration (black/flat frames skipped)
+    "versioned_paths": true,               // media at <id>/<v>/: a re-encode never collides with immutable caches
+    "jobs": 2,                             // parallel encodes
+  },
+
+  "ads": {
+    "mode": "placeholder",                 // "placeholder" (house slots) | "off" | "live" (empty slots for an ad network)
+    "slots": { "leaderboard": true, "sidebar": true, "inline_mobile": true, "native": true, "sticky": true, "preroll": true },
+    "vast_url": "",                        // https VAST tag for the pre-roll (else the house pre-roll)
+    "house_preroll": true,
+    "native_every": 8,                     // a native card every N video cards
+    "csp_origins": [],                     // ad network origins allowed by the CSP in "live" mode
+  },
+
+  "dev": { "port": 18190 },               // ./tube dev -> http://127.0.0.1:18190
+
+  "deploy": {
+    "target": "ovh",                       // "ovh" (OVH Public Cloud, fully automated) | "ssh" (any Ubuntu server)
+    "prefix": "my-tube-",                  // EVERY cloud resource name starts with it; destructive actions refuse
+                                           // anything else. Must be unique per cloud project. Default: "<slug>-"
+    "domain": "",                          // "" = <ip-with-dashes>.sslip.io (Let's Encrypt works with it)
+    "tls": true,
+    "letsencrypt_email": "",
+    "remote_root": "/srv/my-tube",         // default /srv/<slug>
+    "media_origin": "bucket",              // "bucket": the box pulls from S3 | "rsync": pushed from out/media over SSH
+    "ssh_key": "~/.ssh/id_ed25519",        // its .pub is registered on OVH (ovh) / must be authorized (ssh)
+    "basic_auth": { "user": "viewer", "password_secret": "my-tube-basic-auth" },   // file in ~/.secrets, generated
+
+    "ovh": {
+      "project_id": "",                    // Public Cloud project id (32 hex)
+      "endpoint": "https://eu.api.ovh.com/v1",
+      "token_secret": "ovh-api-token",     // ~/.secrets/ovh-api-token holds the API bearer token
+      "region": "GRA11",
+      "fallback_regions": ["SBG5", "GRA9", "DE1"],   // tried in order when a create fails or lands in ERROR
+      "web_flavor": "d2-4",
+      "loadgen_flavor": "d2-8",
+      "image": "Ubuntu 24.04",
+      "cap_minutes": 360,                  // watchdog: park at cap-15 min, hard delete at cap (raise it for production)
+      "loadgen_cap_minutes": 90,
+      "max_instances": 2,
+      "protected_ids": [],                 // instance/snapshot ids never touched, whatever their name
+    },
+
+    "ssh": {
+      "host": "",                          // IP or hostname of an Ubuntu 22.04/24.04 server
+      "user": "ubuntu",                    // root, or a user with passwordless sudo
+      "port": 22,
+      "allow_ssh_from": "any",             // ufw source for SSH ("any" or an IP/CIDR)
+      "harden": false,                     // sshd: key only, no root login
+    },
+
+    "storage": {                           // any S3-compatible storage (media_origin "bucket")
+      "provider": "Other",                 // rclone provider: Other (OVH), Scaleway, Cloudflare, Minio, AWS...
+      "endpoint": "https://s3.gra.io.cloud.ovh.net",
+      "region": "gra",
+      "bucket": "",                        // "" = auto-named <prefix>media-<6 hex> by ./tube bucket create
+      "access_key_secret": "ovh-s3-access-key",   // file names in ~/.secrets, never the keys themselves
+      "secret_key_secret": "ovh-s3-secret-key",
+      "price_gb_month": 0.007,             // for ./tube cost
+    },
+  },
+}

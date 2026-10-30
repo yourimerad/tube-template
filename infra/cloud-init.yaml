@@ -1,0 +1,15 @@
+#cloud-config
+# Thin cloud-init wrapper (OVH target): infra/up.sh fills __SETUP_B64__ with infra/box-setup.sh (base64) and
+# __SETUP_ENV__ with its settings (ROLE, ROOT, SSH_ALLOW_FROM=<your public IPv4>, RESET_UFW=1, HARDEN=1).
+# The same script bootstraps an existing server for the ssh target, so both paths stay identical.
+# Re-runs in full on a box restored from a park snapshot (park runs `cloud-init clean`).
+ssh_pwauth: false
+disable_root: true
+package_update: false
+write_files:
+  - path: /usr/local/sbin/box-setup.sh
+    permissions: "0755"
+    encoding: b64
+    content: __SETUP_B64__
+runcmd:
+  - [sh, -c, 'env __SETUP_ENV__ /usr/local/sbin/box-setup.sh > /var/log/box-setup.log 2>&1']

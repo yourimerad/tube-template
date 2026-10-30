@@ -1,0 +1,15 @@
+# Local override (used by `./tube dev`): nginx on 127.0.0.1:${LOCAL_PORT} only (no 80/443), plain HTTP.
+services:
+  app:
+    environment:
+      PRIVATE: ${LOCAL_PRIVATE:-1}
+      SITE_HOST: ${LOCAL_HOST:-localhost}
+      SITE_SCHEME: http
+      MEDIA_BASE: /media   # dev always serves the local media, even when media_base is a CDN
+  nginx:
+    environment:
+      PRIVATE: ${LOCAL_PRIVATE:-1}
+      SITE_HOST: ${LOCAL_HOST:-localhost}
+      AUTH_REALM: ${AUTH_REALM:-Private}
+    ports: !override
+      - "127.0.0.1:${LOCAL_PORT:?LOCAL_PORT is required}:80"

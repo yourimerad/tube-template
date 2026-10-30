@@ -1,0 +1,78 @@
+# Site stack: nginx (TLS/auth/cache/media) -> app (Fastify SSR) -> db (Postgres 17).
+# Run from the app directory. Every host path comes from the environment (no defaults on purpose):
+#   TUBE_ROOT       box root: secrets/.env, secrets/htpasswd, letsencrypt/, certbot-www/
+#   MEDIA_HOST_DIR  media tree (pipeline out/media layout), mounted read-only
+#   SITE_SLUG       names the images (<slug>-app:local, <slug>-nginx:local)
+# On a box they live in .env.site (written by infra/deploy.sh, used with --env-file .env.site, together
+# with COMPOSE_PROJECT_NAME); locally `./tube dev` exports them.
+
+x-site-env: &site-env
+  - path: .env.site
+    required: false
+  - path: ${TUBE_ROOT:?TUBE_ROOT is required}/secrets/.env
+    required: true
+
+services:
+  db:
+    image: postgres:17.11-alpine
+    restart: unless-stopped
+    env_file: *site-env
+    environment:
+      POSTGRES_USER: tube
+      POSTGRES_DB: tube
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tube -d tube"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    shm_size: 128mb
+
+  app:
+    build: .
+    image: ${SITE_SLUG:?SITE_SLUG is required}-app:local
+    restart: unless-stopped
+    env_file: *site-env
+    environment:
+      PGHOST: db
+      PGUSER: tube
+      PGDATABASE: tube
+      MEDIA_DIR: /srv/media
+      PORT: "3000"
+    volumes:
+      - ${MEDIA_HOST_DIR:?MEDIA_HOST_DIR is required}:/srv/media:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  nginx:
+    build: ./nginx
+    image: ${SITE_SLUG:?SITE_SLUG is required}-nginx:local
+    restart: unless-stopped
+    env_file:
+      - path: .env.site
+        required: false
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ${MEDIA_HOST_DIR:?MEDIA_HOST_DIR is required}:/srv/media:ro
+      - ./static:/srv/static:ro
+      # must be a FILE before the first `up` (docker creates a directory at a missing bind-mount source)
+      - ${TUBE_ROOT:?TUBE_ROOT is required}/secrets/htpasswd:/etc/nginx/htpasswd:ro
+      - ${TUBE_ROOT:?TUBE_ROOT is required}/letsencrypt:/etc/letsencrypt:ro
+      - ${TUBE_ROOT:?TUBE_ROOT is required}/certbot-www:/var/www/certbot:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  pgdata:
