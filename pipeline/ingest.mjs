@@ -30,6 +30,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { load, configPath, locale, slugify as slugifyBase } from '../lib/config.mjs';
+import { normalizeAds } from '../app/src/ads/normalize.js';
+import { makeSimCreatives } from './simads-creatives.mjs';
 
 const FF_DIR = process.env.FFMPEG_BIN_DIR || '';
 const FFMPEG = FF_DIR ? path.join(FF_DIR, 'ffmpeg') : 'ffmpeg';
@@ -656,9 +658,14 @@ async function main() {
   await fsp.mkdir(cfg.paths.media, { recursive: true });
 
   let failed = 0;
-  const preroll = cfg.ads.mode !== 'off' && cfg.ads.slots.preroll && cfg.ads.house_preroll;
+  const ads = normalizeAds(cfg.ads, { language: cfg.site.language });
+  const preroll = ads.mode !== 'off' && ads.slots.preroll.on && ads.house_preroll;
   if (!opts.only && preroll) {
     try { await makePreroll(cfg, opts.force); } catch (e) { failed++; console.error(`[house] FAILED: ${e.message}`); }
+  }
+  // ads.mode "sim": the simulated network's video creatives (media/_simads/, idempotent).
+  if (!opts.only && ads.mode === 'sim' && !opts.dryRun) {
+    try { await makeSimCreatives(cfg.paths.media, { audience: cfg.audience, force: opts.force }); } catch (e) { failed++; console.error(`[simads] FAILED: ${e.message}`); }
   }
   const t0 = Date.now();
   const res = await pool(todo, jobs, v => ingestOne(cfg, v, videos.indexOf(v), videos.length, opts, threads));

@@ -29,9 +29,18 @@ Content
                                            videos folder (+ manifest) -> HLS ladder, posters, previews, catalog.json
                                            (incremental: unchanged videos are skipped; --prune drops orphans)
 
+Ads (docs/ADS-general.md, docs/ADS-adult.md)
+  ads setup [--yes flags]                  wizard: audience -> networks -> zone per slot (writes the "ads" block;
+                                           --yes: --audience --mode --consent --region --age-gate --net id[:k=v,..]
+                                           --slot name=network:zone[:mobile_zone] | name=on|off)
+  ads check [--mode M]                     validate + enabled slots, the CSP, /ads.txt, unverified presets
+  ads report [URL] [--window 1h|24h|7d|all]  simulated network revenue report (ads.mode "sim"), as a table
+
 Local
-  dev [--port N]                           run the site locally (docker compose) on 127.0.0.1:<port>; prints the
-                                           URL, user and the throwaway local password
+  dev [--port N] [--ads off|placeholder|sim|live|config]
+                                           run the site locally (docker compose) on 127.0.0.1:<port>; prints the
+                                           URL, user and the throwaway local password (--ads overrides ads.mode
+                                           for this dev stack until changed; sim only on a private site)
   dev down [--volumes] | logs | ps         stop (and drop the local database) / follow logs / list containers
   test [URL]                               curl checks + Playwright e2e against the dev site (or URL, with the
                                            deploy password); screenshots in runs/screenshots/
@@ -71,17 +80,23 @@ dev_compose() {   # dev_compose ARGS...  (needs load_shell + DEV_* set)
   ( cd "$REPO/app"; export SITE_SLUG
     TUBE_ROOT="$DEV_DIR/root" MEDIA_HOST_DIR="$MEDIA_OUT" LOCAL_PORT="$PORT" \
     LOCAL_PRIVATE="$SITE_PRIVATE" AUTH_REALM="$AUTH_REALM" HTTP_PORT=80 HTTPS_PORT=443 \
+    LOCAL_RUNTIME_DIR="$DEV_DIR/runtime" LOCAL_AGE_GATE="$AGE_GATE" LOCAL_ADS_MODE="$(cat "$DEV_DIR/ads-mode" 2>/dev/null || true)" \
       docker compose -p "$SITE_SLUG-dev" -f docker-compose.yml -f test/compose.local.yml "$@" )
 }
 
 cmd_dev() {
   load_shell
-  local sub=up PORT="$DEV_PORT" vol=()
+  local sub=up PORT="$DEV_PORT" vol=(); DEV_ADS="${DEV_ADS-__keep}"
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
       up|down|logs|ps) sub="$1"; shift ;;
       --port) PORT="$2"; shift 2 ;;
       --volumes) vol=(-v); shift ;;
+      --ads) DEV_ADS="$2"; shift 2
+        case "$DEV_ADS" in off|placeholder|sim|live|config) ;; *) echo "dev: --ads off|placeholder|sim|live|config" >&2; exit 2;; esac
+        [[ "$DEV_ADS" == sim && "$SITE_PRIVATE" != 1 ]] && { echo "dev: --ads sim needs a private site (\"private\": true)" >&2; exit 2; }
+        [[ "$DEV_ADS" == config ]] && DEV_ADS="" ;;
       *) echo "dev: unknown argument $1" >&2; exit 2 ;;
     esac
   done
@@ -102,14 +117,28 @@ cmd_dev() {
   if [[ ! -s "$env" ]]; then
     ( umask 077; printf 'POSTGRES_PASSWORD=%s\nHASH_SALT=%s\n' "$(openssl rand -hex 24)" "$(openssl rand -hex 32)" > "$env" )
   fi
+  # adult age gate: av_sig cookie key shared by the app and nginx (+ the provider HMAC secret, never printed)
+  local age="$DEV_DIR/root/secrets/age.env"
+  if [[ ! -s "$age" ]] || ! grep -q '^AGE_COOKIE_SECRET=' "$age"; then
+    ( umask 077; printf 'AGE_COOKIE_SECRET=%s\n' "$(openssl rand -hex 32)" > "$age" )
+  fi
+  if [[ -n "$AGE_SECRET_FILE" && -s "$AGE_SECRET_FILE" ]]; then
+    ( umask 077; { grep -v '^AGE_GATE_SECRET=' "$age" || true; printf 'AGE_GATE_SECRET='; tr -d '\n' < "$AGE_SECRET_FILE"; printf '\n'; } > "$age.new"; mv "$age.new" "$age" )
+  fi
   if [[ ! -s "$pw" ]]; then ( umask 077; node -e 'process.stdout.write(require("crypto").randomBytes(96).toString("base64").replace(/[^A-Za-z0-9]/g, "").slice(0, Number(process.argv[1])))' 24 > "$pw" ); fi
   # a FILE before compose runs (docker would create a directory at a missing bind-mount source)
   [[ -d "$DEV_DIR/root/secrets/htpasswd" ]] && rm -rf "$DEV_DIR/root/secrets/htpasswd"
   node "$REPO/lib/htpasswd.mjs" "$BASIC_USER" "$pw" > "$DEV_DIR/root/secrets/htpasswd"
   chmod 644 "$DEV_DIR/root/secrets/htpasswd"
-  cfg runtime "$REPO/app/site.json"
+  mkdir -p "$DEV_DIR/runtime"
+  cfg runtime "$DEV_DIR/runtime/site.json"
+  # the image COPYs app/site.json: create it when missing; the dev stack mounts its own $DEV_DIR/runtime/site.json
+  [[ -f "$REPO/app/site.json" ]] || cp "$DEV_DIR/runtime/site.json" "$REPO/app/site.json"
+  if [[ "$DEV_ADS" != __keep ]]; then printf '%s' "$DEV_ADS" > "$DEV_DIR/ads-mode"; fi
   echo "building and starting $SITE_SLUG-dev on 127.0.0.1:$PORT ..."
   dev_compose up -d --build --remove-orphans 2>&1 | grep -vE '^\s*$' | tail -6
+  # re-read the runtime config / ads mode / age gate env, and start nginx with an empty page cache
+  dev_compose up -d --force-recreate --no-deps app nginx 2>&1 | grep -vE '^\s*$' | tail -2
   local ok=no
   for _ in $(seq 1 90); do
     if [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/healthz")" == 200 ]]; then ok=yes; break; fi
@@ -121,6 +150,7 @@ cmd_dev() {
   if [[ "$SITE_PRIVATE" == 1 ]]; then
     echo "  user: $BASIC_USER   password (local, throwaway): $(cat "$pw")"
   fi
+  local am; am="$(cat "$DEV_DIR/ads-mode" 2>/dev/null || true)"; [[ -n "$am" ]] && echo "  ads mode (--ads): $am"
   echo "  stop: ./tube dev down   (add --volumes to also drop the local database)"
 }
 
@@ -141,18 +171,21 @@ cmd_test() {
     [[ -r "$pwf" ]] || { echo "no password file $pwf" >&2; exit 1; }
     { printf 'user = "%s:' "$BASIC_USER"; tr -d '\n' < "$pwf"; printf '"\n'; } > "$auth_tmp"
   fi
-  local expect; expect="$(node -e '
+  local ncats; ncats="$(node -e '
     const fs = require("fs"); const c = JSON.parse(fs.readFileSync(0, "utf8"));
     let cat = []; try { cat = JSON.parse(fs.readFileSync(c.paths.media + "/catalog.json", "utf8")); } catch {}
     const cats = new Set(cat.filter(v => !v.hidden).map(v => v.category).filter(s => !(c.categories[s] && c.categories[s].hidden)));
-    const on = c.ads.mode !== "off";
-    console.log([cats.size, on && c.ads.slots.sticky ? 1 : 0, on && c.ads.slots.preroll && (c.ads.house_preroll || c.ads.vast_url) ? 1 : 0].join(" "));
+    console.log(cats.size);
   ' < <(cfg json))"
-  local ncats sticky preroll; read -r ncats sticky preroll <<<"$expect"
+  # ads mode / pre-roll / sticky / audience / age gate / consent the e2e tests expect (lib/ads.mjs expect)
+  local amode=""; [[ -z "${1:-}" ]] && amode="$(cat "$DEV_DIR/ads-mode" 2>/dev/null || true)"
+  local ads_mode preroll sticky audience gate consent
+  read -r ads_mode preroll sticky audience gate consent <<<"$(node "$REPO/lib/ads.mjs" --config "$CONFIG" expect ${amode:+--mode "$amode"})"
   local rc=0 stamp="$RUNS_DIR/.last-test" left
   # comments are rate-limited per IP per minute and the last curl check uses up the quota: space runs out
   mkdir -p "$RUNS_DIR"
-  if [[ -f "$stamp" ]]; then
+  local full=1; [[ -n "${E2E_ONLY:-}" && " $E2E_ONLY " != *" e2e.mjs "* ]] && full=0
+  if [[ "$full" == 1 && -f "$stamp" ]]; then
     left=$(( 65 - $(date +%s) + $(stat -c %Y "$stamp") ))
     if (( left > 0 )); then echo "waiting ${left}s for the comment rate-limit window of the previous run"; sleep "$left"; fi
   fi
@@ -161,8 +194,12 @@ cmd_test() {
   local loc=en-US; [[ "$SITE_LANG" == fr ]] && loc=fr-FR
   AUTH_USER="$( [[ "$SITE_PRIVATE" == 1 ]] && echo "$BASIC_USER" || true)" AUTH_PASS_FILE="$( [[ "$SITE_PRIVATE" == 1 ]] && echo "$pwf" || true)" \
   SHOTS="$shots" WORK="${WORK:-$RUNS_DIR/.e2e-work}" LOCALE="$loc" LABEL_TEXT="$LABEL_TEXT" EXPECT_CATS="$ncats" \
-  EXPECT_STICKY="$sticky" EXPECT_PREROLL="$preroll" \
+  EXPECT_STICKY="$sticky" EXPECT_PREROLL="$preroll" ADS_MODE="$ads_mode" AUDIENCE="$audience" AGE_GATE="$gate" \
+  CONSENT="$consent" REPO_DIR="$REPO" \
     bash "$REPO/app/test/run-e2e.sh" "$url" || rc=1
+  if [[ "${SKIP_CURL:-0}" == 1 || "$audience" == adult && "$gate" != off ]]; then
+    echo "== curl checks skipped (SKIP_CURL or adult age gate)"; [[ "$full" == 1 ]] && touch "$stamp"; echo "screenshots: $shots"; return "$rc"
+  fi
   echo "== curl checks ($url)"
   if [[ "$SITE_PRIVATE" == 1 ]]; then AUTH_CFG="$auth_tmp" PRIVATE=1 bash "$REPO/app/test/curl-checks.sh" "$url" || rc=1
   else PRIVATE=0 bash "$REPO/app/test/curl-checks.sh" "$url" || rc=1; fi
@@ -192,6 +229,7 @@ case "$cmd" in
   demo)      cmd_demo "$@" ;;
   ingest)    need_config; exec node "$REPO/pipeline/ingest.mjs" --config "$CONFIG" "$@" ;;
   dev)       cmd_dev "$@" ;;
+  ads)       need_config; exec node "$REPO/lib/ads.mjs" --config "$CONFIG" "$@" ;;
   test)      cmd_test "$@" ;;
   up)        infra up.sh "$@" ;;
   deploy)    infra deploy.sh "$@" ;;

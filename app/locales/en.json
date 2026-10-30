@@ -59,12 +59,102 @@
     "sponsored": "Sponsored",
     "close": "Close ad",
     "preroll_title": "Advertising space",
+    "sponsored_links": "Sponsored links",
     "preroll_sub": "Your ad here - 10 s"
+  },
+  "consent": {
+    "title": "Your choice about ads",
+    "text": "We and our advertising partners would like to use cookies and similar technologies to show ads and measure them. You can accept or refuse; refusing does not stop you from using the site (you will see house ads instead). You can change your choice at any time with the “Cookie settings” link at the bottom of every page.",
+    "accept": "Accept",
+    "refuse": "Refuse",
+    "settings": "Cookie settings",
+    "optout": "Do Not Sell or Share My Personal Information",
+    "optout_on": "Do Not Sell or Share My Personal Information: opted out (click to undo)",
+    "policy": "Privacy policy"
+  },
+  "age": {
+    "title": "Adults only (18+)",
+    "warning": "This website contains sexually explicit material. You must be at least 18 years old (or the age of majority where you live) to enter. By entering you confirm that viewing this material is legal where you are.",
+    "enter": "I am 18 or older - Enter",
+    "leave": "Leave",
+    "verify_with": "Verify my age with {provider}",
+    "provider_default": "our age verification partner",
+    "verify_note": "Age verification is required by law. The verification is done by an independent provider; this site only receives a yes/no answer.",
+    "failed": "Age verification did not succeed. Please try again.",
+    "provider_missing": "Age verification is not configured (age_gate.provider.start_url).",
+    "api_refused": "age verification required",
+    "sim_provider": "Simulated age check",
+    "sim_title": "Simulated age verification (test only)",
+    "sim_text": "This page stands in for a real age verification provider while the site is private. Nothing is checked.",
+    "sim_ok": "Simulate: verified adult",
+    "sim_fail": "Simulate: verification failed",
+    "blocked_title": "Not available in your region",
+    "blocked_text": "This website is not available where you are."
+  },
+  "legal": {
+    "missing": "{key}: to be completed in site.config.json",
+    "links": {
+      "2257": "18 U.S.C. 2257",
+      "dmca": "DMCA / copyright",
+      "report": "Report content",
+      "ncii": "Remove intimate images (NCII)"
+    },
+    "2257": {
+      "title": "18 U.S.C. 2257 Record-Keeping Requirements Compliance Statement",
+      "body": [
+        "All models, actors, actresses and other persons who appear in any visual depiction of actual or simulated sexually explicit conduct appearing on or otherwise contained in {site} were over the age of eighteen (18) years at the time of the creation of such depictions.",
+        "The records required by 18 U.S.C. 2257 and 28 C.F.R. 75 for all materials contained in this website are kept by the following custodian of records: {custodian}, {custodian_address}.",
+        "Operator: {operator}, {address}. Contact: {email}.",
+        "Content that is entirely computer-generated and depicts no real person is not subject to these record-keeping requirements; where such content appears on this site it is labelled as such."
+      ]
+    },
+    "dmca": {
+      "title": "DMCA / copyright notices",
+      "body": [
+        "{site} respects intellectual property rights. If you believe that content on this site infringes your copyright, send a notice to our designated agent: {dmca_email}.",
+        "Your notice must include: your physical or electronic signature; identification of the copyrighted work; the exact URL(s) of the material on this site; your contact information (address, telephone, email); a statement that you have a good-faith belief that the use is not authorized by the copyright owner, its agent or the law; and a statement, under penalty of perjury, that the information in the notice is accurate and that you are authorized to act on behalf of the owner.",
+        "We remove or disable access to the material expeditiously and notify the uploader when possible. Counter-notices can be sent to the same address.",
+        "Operator: {operator}, {address}."
+      ]
+    },
+    "report": {
+      "title": "Report content",
+      "body": [
+        "To report illegal content, non-consensual content, content depicting a minor, or any other abuse, write to {report_email} with the URL(s) concerned and a short description. Reports are reviewed within 24 hours; content that appears to depict a minor or non-consensual acts is removed immediately and reported to the competent authorities.",
+        "Child sexual abuse material: report it immediately, here and to the NCMEC CyberTipline (report.cybertip.org, United States) or PHAROS (internet-signalement.gouv.fr, France). We remove it at once, preserve the evidence as the law requires and report it to the authorities.",
+        "Intimate images published without consent (including AI-generated forgeries): use the removal request page; we act within 48 hours (US TAKE IT DOWN Act).",
+        "In the EU you may also use the notice-and-action mechanism of the Digital Services Act (Regulation (EU) 2022/2065, art. 16) at the same address. In France you can report illegal content to PHAROS (internet-signalement.gouv.fr).",
+        "Operator: {operator}, {address}. Contact: {email}."
+      ]
+    },
+    "2257_synthetic": {
+      "title": "18 U.S.C. 2257 Record-Keeping Requirements Compliance Statement",
+      "body": [
+        "All content on {site} is synthetic: it is generated by computer (AI) and depicts no real person. No actual human being, minor or adult, appears in any visual depiction on this site.",
+        "Because no actual person is depicted, the record-keeping requirements of 18 U.S.C. 2257 and 28 C.F.R. 75 do not apply to this content.",
+        "Operator: {operator}, {address}. Contact: {email}."
+      ]
+    },
+    "ncii": {
+      "title": "Request removal of intimate images (NCII)",
+      "body": [
+        "If an intimate image or video of you (real or AI-generated) was published on {site} without your consent, send us a removal request. Under the US TAKE IT DOWN Act we remove the content, and known copies of it, within 48 hours of a valid request.",
+        "A valid request contains: the URL(s) of the content; enough information to identify you as the person depicted (or someone authorized to act for them); a brief statement that the depiction was published without consent; your contact details; your physical or electronic signature.",
+        "The form below opens your email program with the request addressed to {report_email}. You can also write to that address directly."
+      ],
+      "form_urls": "URL(s) of the content",
+      "form_desc": "Description (what is shown, why it is not consensual)",
+      "form_contact": "Your contact email",
+      "form_sign": "Signature (your full name)",
+      "form_good_faith": "I am the person depicted (or authorized to act for them) and this content was published without consent.",
+      "form_send": "Prepare the email"
+    }
   },
   "watch": {
     "play": "Play video",
     "skip_in": "Skip ad in",
     "skip": "Skip ad ›",
+    "ad_ends_in": "Ad ends in",
     "quality_auto": "Auto",
     "like": "Like",
     "dislike": "Dislike",

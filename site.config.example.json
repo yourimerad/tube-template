@@ -66,13 +66,80 @@
     "jobs": 2,                             // parallel encodes
   },
 
+  // Who the site is for: "general" (default) or "adult". adult adds the age gate below, the RTA label (meta +
+  // "Rating" header), the /legal/2257 /legal/dmca /legal/report /legal/ncii pages, and only allows adult ad
+  // networks (no Google). See docs/ADS-adult.md.
+  "audience": "general",
+
+  // audience "adult" only. Passing the gate = SESSION cookies (closing the browser forgets it), 1 h sliding
+  // inactivity limit, no "remember me". nginx checks them too: /media and the page cache are gated.
+  "age_gate": {
+    "mode": "provider",                    // "provider" (real age verification) | "click" (18+ button: NOT legal
+                                           // for a public adult site in France, the UK and 27 US states) |
+                                           // "sim" (local fake verifier, private sites only) | "off"
+    "provider": {
+      "name": "",                          // shown on the button ("Verify my age with <name>")
+      "start_url": "",                     // https://... the visitor is sent to (+ return_url + state)
+      "verify": {
+        "type": "hmac",                    // "hmac": token signed with a shared secret | "jws": ES256/RS256
+        "secret_name": "",                 // hmac: file in ~/.secrets (shipped to the box, never printed)
+        "public_key": "",                  // jws: PEM public key, or
+        "jwks_url": "",                    // jws: https JWKS URL (cached 1 h)
+      },
+    },
+    "geo_rules": {},                       // e.g. { "FR": "verify", "US-TX": "verify", "XX": "block",
+                                           //        "default": "verify" }: from CF-IPCountry / X-Country / X-Region
+    "allow_click_through": false,          // must be true to go public with mode "click" or "off" (your call)
+    "exit_url": "",                        // https URL of the "Leave" button ("" = a neutral search page)
+  },
+
+  // audience "adult": placeholders of the legal pages (2257 custodian, DMCA agent, abuse / NCII contact).
+  "legal": {
+    "operator": "", "address": "", "email": "",
+    "custodian": "", "custodian_address": "",
+    "dmca_email": "", "report_email": "",  // report_email receives the NCII removal form (48 h, TAKE IT DOWN Act)
+    "synthetic": false,                    // true ONLY if all content is AI-generated and depicts no real person
+  },
+
+  // Ads: docs/ADS-general.md (general audience) and docs/ADS-adult.md. Wizard: ./tube ads setup; review:
+  // ./tube ads check (slots, CSP, ads.txt); local override: ./tube dev --ads off|placeholder|sim|live.
   "ads": {
-    "mode": "placeholder",                 // "placeholder" (house slots) | "off" | "live" (empty slots for an ad network)
-    "slots": { "leaderboard": true, "sidebar": true, "inline_mobile": true, "native": true, "sticky": true, "preroll": true },
-    "vast_url": "",                        // https VAST tag for the pre-roll (else the house pre-roll)
-    "house_preroll": true,
+    "mode": "placeholder",                 // "placeholder" (labelled house boxes) | "off" | "sim" (simulated ad
+                                           // network with fake revenue, private sites only; ./tube ads report) |
+                                           // "live" (the networks configured below)
+    // Each slot: true / false (house box or empty container in live mode), or an object
+    //   { "network": "<preset>", "zone": "<zone id>", "mobile_zone": "<zone id for the mobile size>" }
+    //   { "network": "custom", "html": "<dashboard snippet>", "mobile_html": "...", "csp": ["https://..."] }
+    //   preroll: { "network": "exoclick", "zone": "..." } or { "network": "vast", "vast_url": "https://..." }
+    // Presets: exoclick juicyads trafficstars eroadvertising adsterra hilltopads clickadu monetag (adult or
+    // general, see ./tube ads check) and adsense gam ezoic (Google: general only). popunder / interstitial /
+    // inpage_push are off by default; the engine never hijacks the back button or auto-redirects.
+    "slots": {
+      "leaderboard": true, "sidebar": true, "inline_mobile": true, "native": true, "sticky": true,
+      "preroll": true, "footer": true, "sponsored_links": true,
+      "popunder": false, "interstitial": false, "inpage_push": false,
+    },
+    "networks": {},                        // account ids per preset, e.g. { "adsense": { "publisher_id":
+                                           // "pub-1234567890123456" }, "adsterra": { "banner_host": "..." } }
+    "sponsored_links": [],                 // [{ "label": "Partner", "url": "https://..." }]: header links, labelled
+    "consent": {
+      "mode": "auto",                      // "auto": built-in banner (equal accept / refuse) for every visitor
+                                           // unless region "us" | "banner" | "cmp" (certified TCF CMP below;
+                                           // required for Google in the EU) | "none"
+      "region": "eu",                      // "eu" (opt-in) | "us" (no banner: opt-out link + GPC) | "other"
+      // "us_optout": true,                 // "Do Not Sell or Share" footer link + GPC (default: region us, or en)
+      "cmp_html": "",                      // your CMP's snippet (mode "cmp")
+      "cmp_csp": [],                       // origins the CMP needs
+      "policy_url": "",                    // privacy / cookie policy link in the banner
+    },
+    "ads_txt": [],                         // extra /ads.txt lines (preset lines are generated)
+    "vast_url": "",                        // legacy: https VAST tag for the pre-roll (= slots.preroll vast)
+    "house_preroll": true,                 // house pre-roll when no VAST tag (and while consent is pending)
     "native_every": 8,                     // a native card every N video cards
-    "csp_origins": [],                     // ad network origins allowed by the CSP in "live" mode
+    "csp_origins": [],                     // extra origins allowed by the CSP in "live" mode
+    "csp_unsafe_inline": false,            // escape hatch for networks injecting inline scripts (drops hashes)
+    "csp_unsafe_eval": false,              // Google presets turn it on by themselves
+    "sim": { "origin": "" },               // ads.mode "sim": serve SimAds from another origin ("" = this site)
   },
 
   "dev": { "port": 18190 },               // ./tube dev -> http://127.0.0.1:18190

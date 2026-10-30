@@ -43,6 +43,7 @@ if is_dry; then
   say "1. node lib/config.mjs runtime app/site.json; rsync -az --delete app/ -> $ip:$root/app/ (excludes node_modules .git .env*)"
   say "2. write $root/app/.env.site: SITE_HOST=$host SITE_SLUG=$SITE_SLUG COMPOSE_PROJECT_NAME=$SITE_SLUG TUBE_ROOT=$root MEDIA_HOST_DIR=$root/media PRIVATE=$SITE_PRIVATE MEDIA_BASE=$MEDIA_BASE"
   say "3. on the box: $root/secrets/.env (600 root) gets POSTGRES_PASSWORD + HASH_SALT if absent (openssl rand on the box)"
+  say "   + $root/secrets/age.env (600 root): AGE_COOKIE_SECRET if absent$( [[ "${AGE_GATE:-0}" == 1 && -s "${AGE_SECRET_FILE:-}" ]] && echo ", AGE_GATE_SECRET from $AGE_SECRET_FILE (stdin)" ); AGE_GATE=${AGE_GATE:-0} in .env.site"
   say "4. basic auth: $( [[ -s "$BASIC_FILE" ]] && echo "password file $BASIC_FILE exists" || echo "would generate $BASIC_FILE (600, 32 chars)"); {SHA} hash -> $root/secrets/htpasswd (if empty, or --rotate-auth)"
   if [[ "$SKIP_MEDIA" == yes ]]; then say "5. media: skipped"
   elif [[ "$MEDIA_ORIGIN" == bucket ]]; then
@@ -76,8 +77,8 @@ say "app synced"
 
 has_cert() { R "$S test -s $root/letsencrypt/live/$host/fullchain.pem"; }
 write_env() {   # write_env SCHEME
-  printf 'SITE_HOST=%s\nSITE_SLUG=%s\nCOMPOSE_PROJECT_NAME=%s\nTUBE_ROOT=%s\nMEDIA_HOST_DIR=%s\nPRIVATE=%s\nMEDIA_BASE=%s\nAUTH_REALM=%s\nSITE_SCHEME=%s\n' \
-    "$host" "$SITE_SLUG" "$SITE_SLUG" "$root" "$root/media" "$SITE_PRIVATE" "$MEDIA_BASE" "$AUTH_REALM" "$1" \
+  printf 'SITE_HOST=%s\nSITE_SLUG=%s\nCOMPOSE_PROJECT_NAME=%s\nTUBE_ROOT=%s\nMEDIA_HOST_DIR=%s\nPRIVATE=%s\nMEDIA_BASE=%s\nAUTH_REALM=%s\nSITE_SCHEME=%s\nAGE_GATE=%s\n' \
+    "$host" "$SITE_SLUG" "$SITE_SLUG" "$root" "$root/media" "$SITE_PRIVATE" "$MEDIA_BASE" "$AUTH_REALM" "$1" "${AGE_GATE:-0}" \
     | R "cat > $root/app/.env.site && chmod 644 $root/app/.env.site"
 }
 scheme=http; if has_cert; then scheme=https; fi
@@ -98,7 +99,18 @@ add() {  # add KEY: only when KEY is absent (never rotates an existing secret)
 add POSTGRES_PASSWORD 24
 add HASH_SALT 32
 chown root:root "$f"; chmod 600 "$f"
+# adult age gate: av_sig cookie key shared by the app and nginx (generated here, once; alphanumeric for nginx)
+a="$ROOT/secrets/age.env"
+touch "$a"
+if ! grep -q '^AGE_COOKIE_SECRET=' "$a"; then printf 'AGE_COOKIE_SECRET=%s\n' "$(openssl rand -hex 32)" >> "$a"; echo "secrets/age.env: added AGE_COOKIE_SECRET"; fi
+chown root:root "$a"; chmod 600 "$a"
 REMOTE
+
+# age verification provider HMAC secret (age_gate.provider.verify.secret_name): piped through stdin, never printed
+if [[ "${AGE_GATE:-0}" == 1 && -n "${AGE_SECRET_FILE:-}" && -s "$AGE_SECRET_FILE" ]]; then
+  tr -d '\n' < "$AGE_SECRET_FILE" | R "$S sh -c 'umask 077; a=$root/secrets/age.env; v=\$(cat); { grep -v \"^AGE_GATE_SECRET=\" \$a || true; printf \"AGE_GATE_SECRET=%s\\n\" \"\$v\"; } > \$a.new && mv \$a.new \$a && chmod 600 \$a'"
+  say "secrets/age.env: AGE_GATE_SECRET updated from $AGE_SECRET_FILE (not printed)"
+fi
 
 # ---- 4. basic auth
 if [[ ! -s "$BASIC_FILE" ]]; then

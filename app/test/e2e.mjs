@@ -2,7 +2,10 @@
 // Env: BASE (site URL), AUTH_USER/AUTH_PASS (basic auth, optional), SHOTS (screenshot dir),
 //      VIDEO_PATH (/v/<id>/<slug> to test; default = first card on home),
 //      LOCALE (browser locale, e.g. fr-FR / en-US), LABEL_TEXT (content label expected on video pages, '' = none),
-//      EXPECT_CATS (number of category tiles), EXPECT_STICKY=0|1, EXPECT_PREROLL=0|1 (default 1 each).
+//      EXPECT_CATS (number of category tiles), EXPECT_STICKY=0|1 (default 1),
+//      EXPECT_PREROLL=0|house|vast|any (default house; 1 = house): which pre-roll plays (vast/any: any creative),
+//      AGE_GATE=off|click|sim|provider (adult audience: passes the gate first; provider -> the run is skipped),
+//      CONSENT=none|banner|cmp (banner: accepts it so it does not cover the page).
 import { chromium } from 'playwright-core';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:18190';
@@ -11,7 +14,23 @@ const LOCALE = process.env.LOCALE || 'en-US';
 const LABEL_TEXT = process.env.LABEL_TEXT ?? '';
 const EXPECT_CATS = process.env.EXPECT_CATS ? Number(process.env.EXPECT_CATS) : null;
 const EXPECT_STICKY = process.env.EXPECT_STICKY !== '0';
-const EXPECT_PREROLL = process.env.EXPECT_PREROLL !== '0';
+const PREROLL_KIND = { 1: 'house', '': 'house', undefined: 'house' }[process.env.EXPECT_PREROLL] || process.env.EXPECT_PREROLL;
+const EXPECT_PREROLL = PREROLL_KIND !== '0';
+const AGE_GATE = process.env.AGE_GATE || 'off';
+if (AGE_GATE === 'provider') { console.log('SKIP  e2e: age_gate.mode "provider" needs the real verifier (use the sim mode to test)'); process.exit(0); }
+// Pass the adult age gate (click or simulated verifier) and accept the consent banner of a fresh context.
+async function prep(page) {
+  if (AGE_GATE === 'click' || AGE_GATE === 'sim') {
+    if (await page.locator('.gate .gate-enter').count()) {
+      await page.click('.gate .gate-enter');
+      if (AGE_GATE === 'sim') await page.click('[data-sim-result="1"]');
+      await page.waitForLoadState('networkidle');
+    }
+  }
+  if (process.env.CONSENT === 'banner' && await page.locator('#consent').isVisible().catch(() => false)) {
+    await page.click('#consent [data-consent-choice="1"]');
+  }
+}
 const auth = process.env.AUTH_USER ? { username: process.env.AUTH_USER, password: process.env.AUTH_PASS } : undefined;
 const results = [];
 const ok = (name, cond, extra = '') => {
@@ -41,6 +60,7 @@ try {
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await prep(page);
   await page.screenshot({ path: `${SHOTS}/home-desktop-1440-viewport.png` });
   if (EXPECT_STICKY) {
     ok('sticky ad bar shown', await page.locator('#adbar').isVisible());
@@ -96,16 +116,18 @@ try {
   await page.screenshot({ path: `${SHOTS}/video-desktop-1440.png`, fullPage: true });
   await page.click('#bigplay');
   if (EXPECT_PREROLL) {
-    const adPlaying = await waitFor(() => page.evaluate(() => {
+    const house = PREROLL_KIND === 'house';
+    const adPlaying = await waitFor(() => page.evaluate(h => {
       const a = document.getElementById('advid');
-      return !document.getElementById('adlayer').hidden && a && !a.paused && a.currentTime > 0.2 && a.currentSrc.includes('/_house/preroll.mp4');
-    }), 6000);
-    ok('pre-roll plays', adPlaying);
-    ok('skip disabled at start', await page.locator('#adskip').isDisabled());
+      return !document.getElementById('adlayer').hidden && a && !a.paused && a.currentTime > 0.2 && (!h || a.currentSrc.includes('/_house/preroll.mp4'));
+    }, house), 8000);
+    ok(`pre-roll plays (${PREROLL_KIND})`, adPlaying);
+    if (house) ok('skip disabled at start', await page.locator('#adskip').isDisabled());
     await page.screenshot({ path: `${SHOTS}/video-preroll.png`, clip: { x: 0, y: 0, width: 1440, height: 900 } });
-    const skippable = await waitFor(() => page.locator('#adskip').isEnabled(), 8000, 200);
-    ok('skip enabled after 5 s', skippable, await page.locator('#adskip').textContent());
-    await page.click('#adskip');
+    // VAST creatives may be non-skippable (they then run to the end, max ~35 s)
+    const skippable = await waitFor(() => page.evaluate(() => document.getElementById('adlayer').hidden || !document.getElementById('adskip').disabled), house ? 8000 : 40000, 200);
+    ok(house ? 'skip enabled after 5 s' : 'pre-roll skippable or finished', skippable, await page.locator('#adskip').textContent());
+    if (await page.locator('#adskip').isVisible() && await page.locator('#adskip').isEnabled()) await page.click('#adskip');
   }
   const t0 = await waitFor(() => page.evaluate(() => { const v = document.getElementById('mainvid'); return v.currentTime > 0.3 ? v.currentTime : 0; }), 10000);
   await sleep(1500);
@@ -160,6 +182,7 @@ try {
   });
   const m = await mob.newPage();
   await m.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await prep(m);
   await m.screenshot({ path: `${SHOTS}/home-mobile-390.png`, fullPage: true });
   await m.evaluate(() => window.scrollTo(0, 250));
   await sleep(1300);

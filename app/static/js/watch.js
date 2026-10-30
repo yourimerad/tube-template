@@ -72,13 +72,16 @@
         adlayer.hidden = true;
         resolve(reason);
       };
-      const skipAfter = Number(ad.skipAfter) || 0;
+      // VAST without skipoffset = not skippable: the button counts down to the end of the ad instead.
+      const skippable = ad.skipAfter !== null && ad.skipAfter !== undefined && Number.isFinite(Number(ad.skipAfter));
+      const skipAfter = skippable ? Number(ad.skipAfter) : Infinity;
       const label = adskip.querySelector('span');
+      if (!skippable && adskip.firstChild) adskip.firstChild.textContent = `${W.ad_ends_in || ''} `;
       const tick = () => {
-        const left = Math.ceil(skipAfter - advid.currentTime);
-        if (left <= 0) {
+        const left = skippable ? Math.ceil(skipAfter - advid.currentTime) : Math.ceil((advid.duration || ad.duration || 0) - advid.currentTime);
+        if (skippable && left <= 0) {
           if (adskip.disabled) { adskip.disabled = false; adskip.textContent = W.skip; }
-        } else if (label) label.textContent = String(left);
+        } else if (label && Number.isFinite(left)) label.textContent = String(Math.max(0, left));
       };
       adskip.disabled = true;
       adlayer.hidden = false;
@@ -86,6 +89,7 @@
       advid.addEventListener('error', () => finish('error'), { once: true });
       advid.addEventListener('playing', () => { clearTimeout(watchdog); ad.track?.('start'); }, { once: true });
       adskip.addEventListener('click', () => { if (!adskip.disabled) finish('skip'); });
+      ad.bind?.(advid);
       if (ad.clickThrough) {
         advid.style.cursor = 'pointer';
         advid.addEventListener('click', () => { ad.track?.('clickThrough'); window.open(ad.clickThrough, '_blank', 'noopener'); });

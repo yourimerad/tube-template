@@ -6,10 +6,17 @@ services:
       SITE_HOST: ${LOCAL_HOST:-localhost}
       SITE_SCHEME: http
       MEDIA_BASE: /media   # dev always serves the local media, even when media_base is a CDN
+      ADS_MODE: ${LOCAL_ADS_MODE:-}   # ./tube dev --ads off|placeholder|sim|live (empty = ads.mode of the config)
+      SITE_JSON: /run/tube/site.json
+    volumes:
+      # the runtime config of THIS dev site (several dev stacks can share the repo without racing on app/site.json);
+      # a directory mount, so a rewritten site.json is seen after an app restart
+      - ${LOCAL_RUNTIME_DIR:?LOCAL_RUNTIME_DIR is required}:/run/tube:ro
   nginx:
     environment:
       PRIVATE: ${LOCAL_PRIVATE:-1}
       SITE_HOST: ${LOCAL_HOST:-localhost}
       AUTH_REALM: ${AUTH_REALM:-Private}
+      AGE_GATE: ${LOCAL_AGE_GATE:-0}
     ports: !override
       - "127.0.0.1:${LOCAL_PORT:?LOCAL_PORT is required}:80"

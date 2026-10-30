@@ -59,12 +59,102 @@
     "sponsored": "Sponsorisé",
     "close": "Fermer la publicité",
     "preroll_title": "Espace publicitaire",
+    "sponsored_links": "Liens sponsorisés",
     "preroll_sub": "Votre annonce ici - 10 s"
+  },
+  "consent": {
+    "title": "Votre choix concernant la publicité",
+    "text": "Nous et nos partenaires publicitaires souhaitons utiliser des cookies et technologies similaires pour afficher des publicités et les mesurer. Vous pouvez accepter ou refuser ; refuser ne vous empêche pas d'utiliser le site (des annonces maison s'affichent à la place). Vous pouvez changer d'avis à tout moment avec le lien « Paramètres des cookies » en bas de chaque page.",
+    "accept": "Accepter",
+    "refuse": "Refuser",
+    "settings": "Paramètres des cookies",
+    "optout": "Ne pas vendre ni partager mes informations personnelles",
+    "optout_on": "Ne pas vendre ni partager mes informations personnelles : refusé (cliquer pour annuler)",
+    "policy": "Politique de confidentialité"
+  },
+  "age": {
+    "title": "Réservé aux adultes (18+)",
+    "warning": "Ce site contient des contenus à caractère sexuel explicite. Vous devez avoir au moins 18 ans (ou l'âge de la majorité dans votre pays) pour entrer. En entrant, vous confirmez que la consultation de ces contenus est légale là où vous vous trouvez.",
+    "enter": "J'ai 18 ans ou plus - Entrer",
+    "leave": "Quitter",
+    "verify_with": "Vérifier mon âge avec {provider}",
+    "provider_default": "notre partenaire de vérification d'âge",
+    "verify_note": "La vérification de l'âge est imposée par la loi. Elle est réalisée par un prestataire indépendant ; ce site ne reçoit qu'une réponse oui/non.",
+    "failed": "La vérification de l'âge n'a pas abouti. Veuillez réessayer.",
+    "provider_missing": "La vérification de l'âge n'est pas configurée (age_gate.provider.start_url).",
+    "api_refused": "vérification de l'âge requise",
+    "sim_provider": "Vérification d'âge simulée",
+    "sim_title": "Vérification d'âge simulée (test uniquement)",
+    "sim_text": "Cette page remplace un vrai prestataire de vérification d'âge tant que le site est privé. Rien n'est vérifié.",
+    "sim_ok": "Simuler : adulte vérifié",
+    "sim_fail": "Simuler : échec de la vérification",
+    "blocked_title": "Indisponible dans votre région",
+    "blocked_text": "Ce site n’est pas accessible depuis votre localisation."
+  },
+  "legal": {
+    "missing": "{key} : à compléter dans site.config.json",
+    "links": {
+      "2257": "18 U.S.C. 2257",
+      "dmca": "DMCA / droit d'auteur",
+      "report": "Signaler un contenu",
+      "ncii": "Retrait d’images intimes"
+    },
+    "2257": {
+      "title": "Déclaration de conformité 18 U.S.C. 2257 (registres)",
+      "body": [
+        "Tous les modèles, acteurs, actrices et autres personnes apparaissant dans une représentation visuelle d'un comportement sexuellement explicite réel ou simulé figurant sur {site} avaient plus de dix-huit (18) ans au moment de la création de ces représentations.",
+        "Les registres exigés par 18 U.S.C. 2257 et 28 C.F.R. 75 pour tous les contenus de ce site sont conservés par le gardien des registres suivant : {custodian}, {custodian_address}.",
+        "Éditeur : {operator}, {address}. Contact : {email}.",
+        "Les contenus entièrement générés par ordinateur, ne représentant aucune personne réelle, ne sont pas soumis à ces obligations ; lorsqu'ils figurent sur ce site, ils sont signalés comme tels."
+      ]
+    },
+    "dmca": {
+      "title": "DMCA / droit d'auteur",
+      "body": [
+        "{site} respecte les droits de propriété intellectuelle. Si vous estimez qu'un contenu de ce site porte atteinte à vos droits, adressez une notification à : {dmca_email}.",
+        "La notification doit comporter : votre signature physique ou électronique ; l'identification de l'œuvre protégée ; l'URL exacte du contenu sur ce site ; vos coordonnées (adresse, téléphone, e-mail) ; une déclaration de bonne foi indiquant que l'utilisation n'est pas autorisée par le titulaire des droits, son représentant ou la loi ; et une déclaration, sous peine de parjure, que les informations sont exactes et que vous êtes habilité à agir au nom du titulaire.",
+        "Nous retirons ou rendons inaccessible le contenu dans les meilleurs délais et prévenons la personne qui l'a mis en ligne lorsque c'est possible. Les contre-notifications peuvent être envoyées à la même adresse.",
+        "Éditeur : {operator}, {address}."
+      ]
+    },
+    "report": {
+      "title": "Signaler un contenu",
+      "body": [
+        "Pour signaler un contenu illicite, non consenti, représentant un mineur ou tout autre abus, écrivez à {report_email} en indiquant la ou les URL concernées et une brève description. Les signalements sont traités sous 24 heures ; un contenu semblant représenter un mineur ou des actes non consentis est retiré immédiatement et signalé aux autorités compétentes.",
+        "Contenus pédocriminels : signalez-les immédiatement, ici et sur PHAROS (internet-signalement.gouv.fr, France) ou à la CyberTipline du NCMEC (report.cybertip.org, États-Unis). Nous les retirons sur-le-champ, conservons les preuves comme la loi l’exige et les signalons aux autorités.",
+        "Images intimes publiées sans consentement (y compris des montages générés par IA) : utilisez la page de demande de retrait ; nous agissons sous 48 heures (TAKE IT DOWN Act américain).",
+        "Dans l'UE, vous pouvez aussi utiliser le mécanisme de notification du règlement sur les services numériques (DSA, règlement (UE) 2022/2065, art. 16) à la même adresse. En France, vous pouvez signaler un contenu illicite sur PHAROS (internet-signalement.gouv.fr).",
+        "Éditeur : {operator}, {address}. Contact : {email}."
+      ]
+    },
+    "2257_synthetic": {
+      "title": "Déclaration de conformité 18 U.S.C. 2257 (registres)",
+      "body": [
+        "Tout le contenu de {site} est synthétique : il est généré par ordinateur (IA) et ne représente aucune personne réelle. Aucun être humain, mineur ou adulte, n’apparaît dans les représentations visuelles de ce site.",
+        "Aucune personne réelle n’étant représentée, les obligations de tenue de registres du 18 U.S.C. 2257 et du 28 C.F.R. 75 ne s’appliquent pas à ce contenu.",
+        "Exploitant : {operator}, {address}. Contact : {email}."
+      ]
+    },
+    "ncii": {
+      "title": "Demander le retrait d’images intimes",
+      "body": [
+        "Si une image ou une vidéo intime de vous (réelle ou générée par IA) a été publiée sur {site} sans votre consentement, envoyez-nous une demande de retrait. Conformément au TAKE IT DOWN Act américain, nous retirons le contenu, et ses copies connues, sous 48 heures après une demande valide.",
+        "Une demande valide contient : l’URL ou les URL du contenu ; de quoi vous identifier comme la personne représentée (ou une personne autorisée à agir pour elle) ; une brève déclaration indiquant que la publication s’est faite sans consentement ; vos coordonnées ; votre signature physique ou électronique.",
+        "Le formulaire ci-dessous ouvre votre messagerie avec la demande adressée à {report_email}. Vous pouvez aussi écrire directement à cette adresse."
+      ],
+      "form_urls": "URL du contenu",
+      "form_desc": "Description (ce qui est montré, pourquoi ce n’est pas consenti)",
+      "form_contact": "Votre e-mail de contact",
+      "form_sign": "Signature (vos nom et prénom)",
+      "form_good_faith": "Je suis la personne représentée (ou autorisée à agir pour elle) et ce contenu a été publié sans consentement.",
+      "form_send": "Préparer l’e-mail"
+    }
   },
   "watch": {
     "play": "Lire la vidéo",
     "skip_in": "Passer l'annonce dans",
     "skip": "Passer l'annonce ›",
+    "ad_ends_in": "Fin de l'annonce dans",
     "quality_auto": "Auto",
     "like": "J'aime",
     "dislike": "Je n'aime pas",

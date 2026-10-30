@@ -4,7 +4,8 @@ import { asset } from '../assets.js';
 import { t, label, paths, strings } from '../i18n.js';
 import { themeHref, faviconHref } from '../theme.js';
 import { icons } from './icons.js';
-import { adSlot, stickyBar } from './ads.js';
+import { adSlot, stickyBar, adsHead, adsBodyEnd, adsScript, sponsoredLinks, consentBanner, consentLink } from './ads.js';
+import { legalLinks, rtaMeta } from './legal.js';
 
 // "ClipFlow" -> Clip + <b>Flow</b>: accent on the last capitalised word, if any.
 function logo(name) {
@@ -48,6 +49,8 @@ ${ogImage ? html`<meta property="og:image" content="${ogImage}">` : ''}
 <link rel="icon" href="${faviconHref}" type="image/svg+xml">
 <link rel="stylesheet" href="${asset('/static/css/site.css')}">
 <link rel="stylesheet" href="${themeHref}">
+${rtaMeta()}
+${adsHead()}
 ${head}
 </head>
 <body>
@@ -61,7 +64,7 @@ ${head}
     </form>
   </div>
   <nav class="mainnav" aria-label="${t('main_nav')}">
-    <div class="wrap">${NAV.map(([href, key, id]) => html`<a href="${href}"${id === nav ? raw(' class="on" aria-current="page"') : ''}>${t(key)}</a>`)}</div>
+    <div class="wrap">${NAV.map(([href, key, id]) => html`<a href="${href}"${id === nav ? raw(' class="on" aria-current="page"') : ''}>${t(key)}</a>`)}${sponsoredLinks()}</div>
   </nav>
 </header>
 <div class="wrap lb-wrap">${adSlot('leaderboard')}</div>
@@ -73,9 +76,14 @@ ${body}
     <p class="ftr-brand"><span class="logo-txt">${logo(config.logoText)}</span></p>
     ${ft ? html`<p>${ft}</p>` : ''}
     <p class="ftr-small">${t('copyright', { year: new Date().getFullYear(), site: config.siteName })}${config.footer.legal ? html` ${config.footer.legal}` : ''}</p>
+    ${legalLinks(consentLink())}
   </div>
 </footer>
 ${stickyBar()}
+${consentBanner()}
+${adsBodyEnd()}
+${adsScript() ? html`<script src="${asset(adsScript())}" defer></script>` : ''}
+${config.ageGate.mode !== 'off' ? html`<script src="${asset('/static/js/age.js')}" defer></script>` : ''}
 <script src="${asset('/static/js/site.js')}" defer></script>
 ${scripts.map(s => html`<script src="${asset(s)}" defer></script>`)}
 </body>

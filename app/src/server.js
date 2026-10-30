@@ -6,6 +6,10 @@ import { pool, q, waitForDb, migrate, seed, loadSalt } from './db.js';
 import * as repo from './repo.js';
 import { staticDir } from './assets.js';
 import { listingPage, categoriesPage, watchPage, errorPage } from './views/pages.js';
+import { legalPage, gatePage, simVerifierPage, LEGAL_PAGES, RTA } from './views/legal.js';
+import { buildCsp, inlineScriptHashes } from './ads/csp.js';
+import { adsTxt, adsTxtRedirect } from './ads/adstxt.js';
+import { makeAgeGate, safeNext } from './ads/agegate.js';
 import { t, paths } from './i18n.js';
 import { themeCss, faviconSvg } from './theme.js';
 
@@ -24,23 +28,16 @@ const hash = (kind, value) => createHash('sha256').update(`${SALT}|${kind}|${val
 
 // ---------- headers ----------
 const mediaOrigin = /^https?:\/\//.test(config.mediaBase) ? new URL(config.mediaBase).origin : '';
-const vastOrigin = config.ads.vastUrl ? (() => { try { return new URL(config.ads.vastUrl).origin; } catch { return ''; } })() : '';
-// Ad network origins (ads.mode live) from site.config.json ads.csp_origins.
-const adOrigins = config.adsMode === 'live' ? config.ads.cspOrigins.join(' ') : '';
-const CSP = [
-  "default-src 'self'",
-  `img-src 'self' data: ${mediaOrigin} ${adOrigins}`.replace(/\s+/g, ' ').trim(),
-  `media-src 'self' blob: ${mediaOrigin} ${adOrigins}`.replace(/\s+/g, ' ').trim(),
-  `connect-src 'self' ${mediaOrigin} ${vastOrigin} ${adOrigins}`.replace(/\s+/g, ' ').trim(),
-  "worker-src 'self' blob:",
-  `script-src 'self' ${adOrigins}`.trim(),
-  ...(adOrigins ? [`frame-src ${adOrigins}`] : []),
-  "style-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'self'",
-].join('; ');
+// CSP from the enabled ad presets (src/ads/csp.js): origins per directive + sha256 of the page's inline
+// scripts (pages are cached and identical for everyone: hashes, never nonces).
+const cspBase = { mediaOrigin, simOrigin: config.ads.sim.origin };
+const cspCache = new Map(); // inline-script set -> header (few distinct pages kinds)
+const cspFor = page => {
+  const hashes = inlineScriptHashes(page);
+  const k = hashes.join(' ');
+  if (!cspCache.has(k)) { if (cspCache.size > 200) cspCache.clear(); cspCache.set(k, buildCsp(config.ads, cspBase, hashes)); }
+  return cspCache.get(k);
+};
 
 app.addHook('onSend', async (req, reply, payload) => {
   reply.header('X-Content-Type-Options', 'nosniff');
@@ -48,7 +45,9 @@ app.addHook('onSend', async (req, reply, payload) => {
   if (config.private) reply.header('X-Robots-Tag', 'noindex, nofollow');
   const ct = String(reply.getHeader('content-type') || '');
   if (ct.startsWith('text/html')) {
-    reply.header('Content-Security-Policy', CSP);
+    reply.header('Content-Security-Policy', cspFor(typeof payload === 'string' ? payload : ''));
+    if (gate.enabled) reply.header('Vary', 'Cookie'); // a CDN must not serve gated pages to ungated visitors
+    if (config.audience === 'adult') reply.header('Rating', RTA); // RTA label as a header too (rtalabel.org)
     reply.header('X-Frame-Options', 'SAMEORIGIN');
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
   }
@@ -67,6 +66,99 @@ const sendPage = (reply, page, status = 200) => {
   }
   return reply.send(String(page));
 };
+
+// HTML forms (age gate): application/x-www-form-urlencoded, tiny bodies only.
+app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 2048 },
+  (req, body, done) => done(null, Object.fromEntries(new URLSearchParams(body))));
+
+// ---------- age gate (audience "adult", src/ads/agegate.js) ----------
+// Session cookies av_exp + av_sig (1 h sliding, no "remember me"), checked here AND by nginx (secure_link: gates
+// /media, keys the page cache). Geo rules from CF-IPCountry / X-Country / X-Region (set by a CDN or proxy).
+const gate = makeAgeGate({ audience: config.audience, gate: config.ageGate, cookieSecret: config.ageCookieSecret, tokenSecret: config.ageGateSecret });
+if (gate.enabled && gate.mode === 'provider' && !gate.tokenReady) app.log.warn('age gate: no provider verification key (AGE_GATE_SECRET / verify.public_key / verify.jwks_url): tokens will be refused');
+const UNGATED = /^\/(age\/|legal\/|static\/|simads\/report\.json$|healthz$|robots\.txt$|ads\.txt$|theme\.css$|favicon\.(svg|ico)$)/;
+const isHttps = req => req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
+if (gate.enabled) {
+  app.addHook('onRequest', async (req, reply) => {
+    const path = req.url.split('?')[0];
+    if (UNGATED.test(path)) return;
+    const rule = gate.rule(req.headers);
+    if (rule !== 'block' && gate.passed(req.headers.cookie)) return;
+    if (path.startsWith('/api/')) return reply.code(403).header('Cache-Control', 'no-store').send({ error: t('age.api_refused') });
+    if (path.startsWith('/media/') || path.startsWith('/simads/')) return reply.code(403).header('Cache-Control', 'no-store').send('age verification required');
+    return sendPage(reply, gatePage({ next: safeNext(req.url), rule }), rule === 'block' ? 451 : 200);
+  });
+}
+const sameOrigin = req => {
+  if (!req.headers.origin) return true;
+  try { return new URL(req.headers.origin).host === req.headers.host; } catch { return false; }
+};
+const noStorePage = (reply, page, status) => reply.code(status).type('text/html; charset=utf-8').header('Cache-Control', 'no-store').send(String(page));
+
+if (gate.enabled) {
+  app.register(async r => {
+    r.addHook('onRequest', async (req, reply) => { reply.header('Cache-Control', 'no-store'); });
+    r.get('/gate', async (req, reply) => noStorePage(reply, gatePage({ next: safeNext(req.query.next), rule: gate.rule(req.headers) }), 200));
+    // 18+ click-through: mode "click", or a geo rule "click" for this visitor's country/state.
+    r.post('/confirm', async (req, reply) => {
+      if (!sameOrigin(req)) return reply.code(403).send('origin refused');
+      if (gate.rule(req.headers) !== 'click') return reply.code(403).send('age verification required');
+      reply.header('Set-Cookie', gate.setCookies(isHttps(req)));
+      return reply.redirect(safeNext(req.body?.next), 303);
+    });
+    // Sliding 1 h session: static/js/age.js calls this while the visitor is active.
+    r.post('/refresh', async (req, reply) => {
+      if (!sameOrigin(req) || !gate.passed(req.headers.cookie)) return reply.code(403).send('');
+      reply.header('Set-Cookie', gate.setCookies(isHttps(req)));
+      return reply.code(204).send();
+    });
+    r.post('/leave', async (req, reply) => {
+      reply.header('Set-Cookie', gate.clearCookies(isHttps(req)));
+      return reply.redirect(config.ageGate.exit_url, 303);
+    });
+    if (gate.mode === 'provider' || gate.mode === 'sim') {
+      r.get('/start', async (req, reply) => {
+        const next = safeNext(req.query.next);
+        const { state, cookie } = gate.newState(isHttps(req));
+        const proto = isHttps(req) ? 'https' : req.protocol;
+        const back = `${proto}://${req.headers.host}/age/callback?next=${encodeURIComponent(next)}`;
+        const start = gate.mode === 'sim' ? `${proto}://${req.headers.host}/age/sim` : config.ageGate.provider.start_url;
+        let u;
+        try { u = new URL(start); } catch { return noStorePage(reply, gatePage({ next, error: t('age.provider_missing') }), 500); }
+        u.searchParams.set('return_url', back);
+        u.searchParams.set('state', state);
+        reply.header('Set-Cookie', cookie);
+        return reply.redirect(u.toString(), 302);
+      });
+      r.get('/callback', async (req, reply) => {
+        const next = safeNext(req.query.next);
+        const ok = await gate.verifyToken(req.query.token, gate.stateOf(req.headers.cookie));
+        if (ok !== true) {
+          req.log.info({ reason: ok }, 'age verification refused');
+          return noStorePage(reply, gatePage({ next, error: t('age.failed') }), 403);
+        }
+        reply.header('Set-Cookie', [...gate.setCookies(isHttps(req)), gate.clearState(isHttps(req))]);
+        return reply.redirect(next, 303);
+      });
+    }
+    if (gate.mode === 'sim') {
+      const backOk = (req, u) => { try { const x = new URL(u); return x.host === req.headers.host && x.pathname === '/age/callback'; } catch { return false; } };
+      r.get('/sim', async (req, reply) => {
+        if (!backOk(req, req.query.return_url)) return reply.code(400).send('bad return_url');
+        return noStorePage(reply, simVerifierPage({ returnUrl: req.query.return_url, state: String(req.query.state || '') }), 200);
+      });
+      r.post('/sim', async (req, reply) => {
+        const b = req.body || {};
+        if (!sameOrigin(req) || !backOk(req, b.return_url)) return reply.code(400).send('bad request');
+        const token = gate.signToken({ over18: b.result === '1', exp: Math.floor(Date.now() / 1000) + 300, state: String(b.state || '') });
+        const u = new URL(b.return_url);
+        u.searchParams.set('token', token);
+        u.searchParams.set('state', String(b.state || ''));
+        return reply.redirect(u.toString(), 303);
+      });
+    }
+  }, { prefix: '/age' });
+}
 
 // ---------- static (nginx serves /static directly in compose; this is the fallback/dev path) ----------
 await app.register(fastifyStatic, {
@@ -174,6 +266,27 @@ app.get('/sitemap.xml', async (req, reply) => {
   reply.type('application/xml; charset=utf-8').header('Cache-Control', 'public, max-age=300');
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`;
 });
+
+// ads.txt: lines of the configured network presets + ads.ads_txt (src/ads/adstxt.js).
+const adsTxtBody = adsTxt(config.ads, config.siteName);
+const adsTxtTo = adsTxtRedirect(config.ads, config.siteHost);
+app.get('/ads.txt', async (req, reply) => (adsTxtTo ? reply.redirect(adsTxtTo, 301)
+  : reply.type('text/plain; charset=utf-8').header('Cache-Control', 'public, max-age=300').send(adsTxtBody)));
+
+// Adult audience: 2257 / DMCA / abuse report pages (template text, placeholders from site.config.json "legal").
+if (config.audience === 'adult') {
+  for (const k of LEGAL_PAGES) app.get(`/legal/${k}`, async (req, reply) => sendPage(reply, legalPage(k)));
+}
+
+// Simulated ad network (ads.mode "sim", private sites only): app/src/simads, its own routes under /simads.
+if (config.adsMode === 'sim') {
+  let simads = null;
+  try { ({ default: simads } = await import('./simads/index.js')); } catch (err) {
+    if (err.code !== 'ERR_MODULE_NOT_FOUND' || !String(err.message).includes('simads/index.js')) throw err;
+    app.log.warn('ads.mode sim but src/simads/index.js is missing: sim slots will stay empty');
+  }
+  if (simads) await app.register(simads, { prefix: '/simads' });
+}
 
 // Per-site theme (accent + content-label colours) and favicon, fingerprinted by content (?v=hash).
 const immutable = 'public, max-age=31536000, immutable';
